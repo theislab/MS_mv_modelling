@@ -151,12 +151,12 @@ class PROTVAE(BaseModuleClass):
     @auto_move_data
     def generative(self, z):
         """Runs the generative model."""
-        px_mean, px_std = self.decoder(z)
+        px_mean, px_var = self.decoder(z)
         prob_detection = self.prob_net(px_mean)
 
         return {
             "px_mean": px_mean,
-            "px_std": px_std,
+            "px_std": torch.sqrt(px_var),
             "prob_detection": prob_detection,
         }
 
@@ -185,7 +185,7 @@ class PROTVAE(BaseModuleClass):
             kl_local=kl_divergence
         )
     
-    def _likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-4):
+    def _likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6):
         px = Normal(px_mean, px_std)
 
         # @TODO: don't do unneccessary computation
@@ -194,12 +194,11 @@ class PROTVAE(BaseModuleClass):
 
         x_sig = (x != 0)
         likelihood = torch.empty_like(x)
-        likelihood[x_sig] = t1[x_sig]
-        likelihood[~x_sig] = t2[~x_sig]
+        likelihood[~x_sig] = t1[~x_sig]
+        likelihood[x_sig] = t2[x_sig]
 
         return likelihood
         #return px.log_prob(x)
-
 
 
 class PROTVI(
