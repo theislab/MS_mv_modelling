@@ -4,6 +4,7 @@ from typing import Callable, Iterable, Literal, Optional, List
 
 import numpy as np
 import torch
+from torch import nn as nn
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 
@@ -82,7 +83,7 @@ class PROTVAE(BaseModuleClass):
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
-        self.z_encoder = Encoder(
+        self.encoder = Encoder(
             n_input,
             n_latent,
             n_layers=n_layers,
@@ -104,6 +105,18 @@ class PROTVAE(BaseModuleClass):
             use_layer_norm=use_layer_norm_decoder,
         )
 
+        self.prob_net = nn.Sequential(
+            FCLayers(
+                n_latent,
+                n_input,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                use_batch_norm=use_batch_norm_decoder,
+                use_layer_norm=use_layer_norm_decoder,
+            ),
+            nn.Sigmoid(),
+        )
+
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -122,7 +135,7 @@ class PROTVAE(BaseModuleClass):
         if self.log_variational:
             x_ = torch.log(1 + x_)
 
-        qz, z = self.z_encoder(x_)
+        qz, z = self.encoder(x_)
 
         return {
             "qz": qz,
@@ -155,9 +168,11 @@ class PROTVAE(BaseModuleClass):
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
+        likelihood = self._likelihood(qz, px, x)
+
         kl_divergence = kl(qz, pz).sum(dim=-1)
         weighted_kl_local = kl_weight * kl_divergence
-        reconst_loss = -px.log_prob(x).sum(-1)
+        reconst_loss = -likelihood.sum(-1)
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
@@ -166,6 +181,20 @@ class PROTVAE(BaseModuleClass):
             reconstruction_loss=reconst_loss, 
             kl_local=kl_divergence
         )
+    
+    def _likelihood(self, qz, px, x, eps=1e-4):
+        prob_detection = self.prob_net(qz.loc)
+
+        # @TODO: don't do unneccessary computation
+        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
+        t2 = torch.log(torch.clamp(prob_detection, min=eps)) + px.log_prob(x)
+
+        x_sig = (x != 0)
+        likelihood = torch.empty_like(x)
+        likelihood[x_sig] = t1[x_sig]
+        likelihood[~x_sig] = t2[~x_sig]
+
+        return likelihood
 
 
 
