@@ -13,7 +13,10 @@ class DataLoader:
 
     def _filter(self):
         # Filtering from Christine:
-        self.adata = self.adata[self.adata.obs['Qalb'] == self.adata.obs['Qalb']]
+
+        #self.adata = self.adata[self.adata.obs['Qalb'] == self.adata.obs['Qalb']]
+        self.adata = self.adata[~self.adata.obs['Qalb'].isna()]
+
         self.adata = self.adata[[e not in ['++', '+++', 'bloody'] for e in self.adata.obs['Erythrocytes']]]
         self.adata = self.adata[(self.adata.obs[['Erythrocytes']] == self.adata.obs[['Erythrocytes']]).values]
 
@@ -30,14 +33,17 @@ class DataLoader:
             filter_cells=0,
             preprocessing_steps={},
     ):
-        print(self.adata.shape)
+        print(f'dim: {self.adata.shape}')
+        
         sc.pp.filter_genes(self.adata, min_cells=1)
-        print(self.adata.shape)
+        print(f'sc.pp.filter_genes: {self.adata.shape}')
 
         sc.pp.filter_cells(self.adata, min_genes=filter_cells)
-        print(self.adata.shape)
+        print(f'sc.pp.filter_cells: {self.adata.shape}')
+
         self._filter()
-        print(self.adata.shape)
+        print(f'data_loading._filter: {self.adata.shape}')
+
         self.missing_indices = np.where(np.isnan(self.adata.X))
 
         for step in preprocessing_steps.keys():
@@ -49,10 +55,12 @@ class DataLoader:
     def _load_data(self, data_path):
         file_name = 'DA-F08.4_-SEC-pass_v06Sc_ion_LibPGQVal1perc_precdLFQdefFull_prot_preprSc03.tsv'
         print(f'loading {file_name}')
+
         data = pd.read_table(
             f'{data_path}{file_name}',
             index_col='protein',
         )
+
         data.drop('Unnamed: 0', axis=1, inplace=True)
         var_cols = [c for c in data.columns if 'JaBa' not in c]
         vars = data[var_cols]
@@ -62,7 +70,6 @@ class DataLoader:
 
         plate = [fn.split('PLATE')[1].split('_')[0] for fn in adata_raw.obs_names]
         adata_raw = adata_raw[[pl[:2] not in ['LT', 'PO', 'QC'] for pl in plate]]
-        print(adata_raw.shape)
 
         row = [fn.split('POS')[1][1] for fn in adata_raw.obs_names]
         col = [str(int(fn.split('POS')[1][2:4])) for fn in adata_raw.obs_names]
