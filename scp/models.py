@@ -84,8 +84,8 @@ class PROTVAE(BaseModuleClass):
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
         self.encoder = Encoder(
-            n_input,
-            n_latent,
+            n_input=n_input,
+            n_output=n_latent,
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
@@ -97,8 +97,8 @@ class PROTVAE(BaseModuleClass):
         )
         
         self.decoder = Decoder(
-            n_latent,
-            n_input,
+            n_input=n_latent,
+            n_output=n_input,
             n_layers=n_layers,
             n_hidden=n_hidden,
             use_batch_norm=use_batch_norm_decoder,
@@ -107,13 +107,14 @@ class PROTVAE(BaseModuleClass):
 
         self.prob_net = nn.Sequential(
             FCLayers(
-                n_latent,
-                n_input,
+                n_in=n_input,
+                n_out=n_hidden,
                 n_layers=n_layers,
                 n_hidden=n_hidden,
                 use_batch_norm=use_batch_norm_decoder,
                 use_layer_norm=use_layer_norm_decoder,
             ),
+            nn.Linear(n_hidden, n_input),
             nn.Sigmoid(),
         )
 
@@ -151,10 +152,12 @@ class PROTVAE(BaseModuleClass):
     def generative(self, z):
         """Runs the generative model."""
         px_mean, px_std = self.decoder(z)
+        prob_detection = self.prob_net(px_mean)
 
         return {
             "px_mean": px_mean,
             "px_std": px_std,
+            "prob_detection": prob_detection,
         }
 
     def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
@@ -163,12 +166,12 @@ class PROTVAE(BaseModuleClass):
 
         px_mean = generative_outputs["px_mean"]
         px_std = generative_outputs["px_std"]
-        px = Normal(px_mean, px_std)
-
+        prob_detection = generative_outputs["prob_detection"]
+        
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
-        likelihood = self._likelihood(qz, px, x)
+        likelihood = self._likelihood(prob_detection, px_mean, px_std, x)
 
         kl_divergence = kl(qz, pz).sum(dim=-1)
         weighted_kl_local = kl_weight * kl_divergence
@@ -182,8 +185,8 @@ class PROTVAE(BaseModuleClass):
             kl_local=kl_divergence
         )
     
-    def _likelihood(self, qz, px, x, eps=1e-4):
-        prob_detection = self.prob_net(qz.loc)
+    def _likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-4):
+        px = Normal(px_mean, px_std)
 
         # @TODO: don't do unneccessary computation
         t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
@@ -195,6 +198,7 @@ class PROTVAE(BaseModuleClass):
         likelihood[~x_sig] = t2[~x_sig]
 
         return likelihood
+        #return px.log_prob(x)
 
 
 
