@@ -9,6 +9,9 @@ setup(
     install_requires=[
         "scvi-tools",
         "lightning==2.0.1", # issue with scvi-tools and newer versions of lightning
+        "scanpy",
+        #"anndata2ri",
+        #"rpy2==3.4.2",
     ]
 
 )
