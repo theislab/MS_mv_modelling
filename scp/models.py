@@ -11,7 +11,12 @@ from torch.distributions import kl_divergence as kl
 from scvi import REGISTRY_KEYS
 from scvi.autotune._types import Tunable
 from scvi.data import AnnDataManager
-from scvi.data.fields import LayerField
+from scvi.data.fields import (
+    LayerField,
+    CategoricalObsField,
+    CategoricalJointObsField,
+    NumericalJointObsField,
+)
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.nn import (
     Decoder,
@@ -42,6 +47,10 @@ class PROTVAE(BaseModuleClass):
         Dimensionality of the latent space
     n_layers
         Number of hidden layers used for encoder and decoder NNs
+    n_continuous_cov
+        Number of continuous covariates
+    n_cats_per_cov
+        Number of categories for each extra categorical covariate
     dropout_rate
         Dropout rate for neural networks
     log_variational
@@ -51,6 +60,11 @@ class PROTVAE(BaseModuleClass):
 
         * ``'normal'`` - Isotropic normal
         * ``'ln'`` - Logistic normal with normal params N(0, 1)
+    encode_covariates
+        Whether to use covariates in the encoder.
+    deeply_inject_covariates
+        Whether to concatenate covariates into output of hidden layers in encoder/decoder. This option
+        only applies when `n_layers` > 1. The covariates are concatenated to the input of subsequent hidden layers.
     use_batch_norm
         Whether to use batch norm in layers.
     use_layer_norm
@@ -63,12 +77,17 @@ class PROTVAE(BaseModuleClass):
     def __init__(
         self,
         n_input: int,
+        n_batch: int,
         n_hidden: Tunable[int] = 128,
         n_latent: Tunable[int] = 10,
         n_layers: Tunable[int] = 1,
+        n_continuous_cov: int = 0,
+        n_cats_per_cov: Optional[Iterable[int]] = None,
         dropout_rate: Tunable[float] = 0.1,
         log_variational: Tunable[bool] = True,
         latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
+        encode_covariates: Tunable[bool] = False,
+        deeply_inject_covariates: Tunable[bool] = True,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
         var_activation: Tunable[Callable] = None,
@@ -83,24 +102,32 @@ class PROTVAE(BaseModuleClass):
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
+        n_input_encoder = n_input + n_continuous_cov * encode_covariates
+        cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
+        encoder_cat_list = cat_list if encode_covariates else None
         self.encoder = Encoder(
-            n_input=n_input,
+            n_input=n_input_encoder,
             n_output=n_latent,
+            n_cat_list=encoder_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
             distribution=latent_distribution,
+            inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_encoder,
             use_layer_norm=use_layer_norm_encoder,
             var_activation=var_activation,
             return_dist=True,
         )
         
+        n_input_decoder = n_latent + n_continuous_cov
         self.decoder = Decoder(
-            n_input=n_latent,
+            n_input=n_input_decoder,
             n_output=n_input,
+            n_cat_list=cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
+            inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
         )
@@ -121,12 +148,30 @@ class PROTVAE(BaseModuleClass):
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+
+        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
         return {
             "x": x,
+            "batch_index": batch_index,
+            "cont_covs": cont_covs,
+            "cat_covs": cat_covs,
         }
 
     @auto_move_data
-    def inference(self, x):
+    def inference(
+        self, 
+        x,
+        batch_index,
+        cont_covs=None,
+        cat_covs=None,
+
+    ):
         """High level inference method.
 
         Runs the inference (encoder) model.
@@ -136,7 +181,17 @@ class PROTVAE(BaseModuleClass):
         if self.log_variational:
             x_ = torch.log(1 + x_)
 
-        qz, z = self.encoder(x_)
+        if cont_covs is not None and self.encode_covariates:
+            encoder_input = torch.cat((x_, cont_covs), dim=-1)
+        else:
+            encoder_input = x_
+
+        if cat_covs is not None and self.encode_covariates:
+            categorical_input = torch.split(cat_covs, 1, dim=1)
+        else:
+            categorical_input = ()
+
+        qz, z = self.encoder(encoder_input, batch_index, *categorical_input)
 
         return {
             "qz": qz,
@@ -145,13 +200,50 @@ class PROTVAE(BaseModuleClass):
 
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
-        input_dict = {"z": z}
-        return input_dict
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+
+        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        return {
+            "z": z,
+            "batch_index": batch_index,
+            "cont_covs": cont_covs,
+            "cat_covs": cat_covs,
+        }
 
     @auto_move_data
-    def generative(self, z):
+    def generative(
+        self, 
+        z,
+        batch_index,
+        cont_covs=None,
+        cat_covs=None,
+    ):
         """Runs the generative model."""
-        px_mean, px_var = self.decoder(z)
+
+        if cont_covs is None:
+            decoder_input = z
+        elif z.dim() != cont_covs.dim():
+            decoder_input = torch.cat(
+                [z, cont_covs.unsqueeze(0).expand(z.size(0), -1, -1)], dim=-1
+            )
+        else:
+            decoder_input = torch.cat([z, cont_covs], dim=-1)
+
+        if cat_covs is not None:
+            categorical_input = torch.split(cat_covs, 1, dim=1)
+        else:
+            categorical_input = ()
+
+        px_mean, px_var = self.decoder(
+            decoder_input,
+            batch_index,
+            *categorical_input
+        )
         prob_detection = self.prob_net(px_mean)
 
         return {
@@ -239,8 +331,20 @@ class PROTVI(
     ):
         super().__init__(adata)
 
+        n_cats_per_cov = (
+            self.adata_manager.get_state_registry(
+                REGISTRY_KEYS.CAT_COVS_KEY
+            ).n_cats_per_key
+            if REGISTRY_KEYS.CAT_COVS_KEY in self.adata_manager.data_registry
+            else None
+        )
+        n_batch = self.summary_stats.n_batch
+
         self.module = PROTVAE(
             n_input=self.summary_stats.n_vars,
+            n_batch = n_batch,
+            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
+            n_cats_per_cov=n_cats_per_cov,
             n_hidden=n_hidden,
             n_latent=n_latent,
             n_layers=n_layers,
@@ -261,6 +365,9 @@ class PROTVI(
         cls,
         adata: AnnData,
         layer: Optional[str] = None,
+        batch_key: Optional[str] = None,
+        categorical_covariate_keys: Optional[List[str]] = None,
+        continuous_covariate_keys: Optional[List[str]] = None,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
 
@@ -270,10 +377,23 @@ class PROTVI(
             AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
         layer
             Name of the layer for which to extract the data.
+        batch_key
+            Key in ``adata.obs`` for batches/cell types/categories.
+        categorical_covariate_keys
+            List of keys in ``adata.obs`` for categorical covariates.
+        continuous_covariate_keys
+            List of keys in ``adata.obs`` for continuous covariates.
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
             LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=False),
+            CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
+            CategoricalJointObsField(
+                REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
+            ),
+            NumericalJointObsField(
+                REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
+            ),
         ]
         adata_manager = AnnDataManager(
             fields=anndata_fields, setup_method_args=setup_method_args
