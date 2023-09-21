@@ -8,7 +8,7 @@ setup(
 
     install_requires=[
         "scvi-tools",
-        "lightning==2.0.1", # issue with scvi-tools and newer versions of lighting
+        "lightning==2.0.1", # issue with scvi-tools and newer versions of lightning
     ]
 
 )

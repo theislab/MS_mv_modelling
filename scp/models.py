@@ -198,7 +198,6 @@ class PROTVAE(BaseModuleClass):
         likelihood[x_sig] = t2[x_sig]
 
         return likelihood
-        #return px.log_prob(x)
 
 
 class PROTVI(
@@ -224,7 +223,8 @@ class PROTVI(
 
         * ``'normal'`` - Normal distribution
         * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
-
+    log_variational
+        Log(data+1) prior to encoding for numerical stability. Not normalization.
     """
 
     def __init__(
@@ -235,6 +235,7 @@ class PROTVI(
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         latent_distribution: Literal["normal", "ln"] = "normal",
+        log_variational: bool = True,
     ):
         super().__init__(adata)
 
@@ -245,6 +246,7 @@ class PROTVI(
             n_layers=n_layers,
             dropout_rate=dropout_rate,
             latent_distribution=latent_distribution,
+            log_variational=log_variational,
         )
 
         self._model_summary_string = (
