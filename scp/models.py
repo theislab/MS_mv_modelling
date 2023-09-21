@@ -96,6 +96,7 @@ class PROTVAE(BaseModuleClass):
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.latent_distribution = latent_distribution
+        self.encode_covariates = encode_covariates
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -119,7 +120,7 @@ class PROTVAE(BaseModuleClass):
             var_activation=var_activation,
             return_dist=True,
         )
-        
+
         n_input_decoder = n_latent + n_continuous_cov
         self.decoder = Decoder(
             n_input=n_input_decoder,
@@ -170,7 +171,6 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-
     ):
         """High level inference method.
 
