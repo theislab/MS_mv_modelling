@@ -34,6 +34,14 @@ from anndata import AnnData
 logger = logging.getLogger(__name__)
 
 
+class NormalCdf(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return 0.5 * (1 + torch.erf(x / np.sqrt(2)))
+
+
 class PROTVAE(BaseModuleClass):
     """Variational auto-encoder for proteomics data.
 
@@ -143,7 +151,7 @@ class PROTVAE(BaseModuleClass):
                 use_layer_norm=use_layer_norm_decoder,
             ),
             nn.Linear(n_hidden, n_input),
-            nn.Sigmoid(),
+            nn.Sigmoid(), #NormalCdf(),
         )
 
     def _get_inference_input(self, tensors):
