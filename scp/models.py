@@ -34,14 +34,6 @@ from anndata import AnnData
 logger = logging.getLogger(__name__)
 
 
-class NormalCdf(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return 0.5 * (1 + torch.erf(x / np.sqrt(2)))
-
-
 class PROTVAE(BaseModuleClass):
     """Variational auto-encoder for proteomics data.
 
@@ -151,7 +143,7 @@ class PROTVAE(BaseModuleClass):
                 use_layer_norm=use_layer_norm_decoder,
             ),
             nn.Linear(n_hidden, n_input),
-            nn.Sigmoid(), #NormalCdf(),
+            nn.Sigmoid(),
         )
 
     def _get_inference_input(self, tensors):
@@ -271,11 +263,11 @@ class PROTVAE(BaseModuleClass):
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
-        likelihood = self._likelihood(prob_detection, px_mean, px_std, x)
+        ll = self._log_likelihood(prob_detection, px_mean, px_std, x)
 
         kl_divergence = kl(qz, pz).sum(dim=-1)
         weighted_kl_local = kl_weight * kl_divergence
-        reconst_loss = -likelihood.sum(-1)
+        reconst_loss = -ll.sum(-1)
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
@@ -285,19 +277,19 @@ class PROTVAE(BaseModuleClass):
             kl_local=kl_divergence
         )
     
-    def _likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6):
+    def _log_likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6, k=20):
         px = Normal(px_mean, px_std)
 
         # @TODO: don't do unneccessary computation
-        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
+        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps)) + torch.log(torch.ones_like(x) / k)
         t2 = torch.log(torch.clamp(prob_detection, min=eps)) + px.log_prob(x)
 
         x_sig = (x != 0)
-        likelihood = torch.empty_like(x)
-        likelihood[~x_sig] = t1[~x_sig]
-        likelihood[x_sig] = t2[x_sig]
+        log_likelihood = torch.empty_like(x)
+        log_likelihood[~x_sig] = t1[~x_sig]
+        log_likelihood[x_sig] = t2[x_sig]
 
-        return likelihood
+        return log_likelihood
 
 
 class PROTVI(
