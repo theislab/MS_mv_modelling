@@ -219,15 +219,10 @@ def combine_PILOT_and_MAIN(main_adata, pilot_adata):
 
     # extract the proteins and samples that are in both datasets from the pilot dataset
     pilot = empty.combine_first(pilot_adata[ids, proteins].to_df())
+    combined_adata.layers["PILOT"] = pilot.values
 
     print(f"Nr. patients | main: {len(main_ids)}, pilot: {len(pilot_ids)}, in both: {len(ids)}")
     print(f"Nr. proteins | main: {len(main_proteins)}, pilot: {len(pilot_proteins)}, in both: {len(proteins)}")
-
-    empty = pd.DataFrame(np.zeros(main_adata.shape), index=main_adata.obs_names, columns=main_adata.var_names)
-    empty[:] = np.nan
-
-    pilot = empty.combine_first(pilot_adata[ids, proteins].to_df())
-    combined_adata.layers["PILOT"] = pilot.values
 
     # ALL layer - combine main and pilot data
     both = main_adata.to_df().combine_first(pilot_adata[ids, proteins].to_df())
@@ -287,3 +282,4 @@ def correct_batch(adata):
         plate_adata.X = (((plate_adata.X - mean_protein_per_plate) / std_protein_per_plate) * std) + mean_protein
 
     # result stored in adata.X
+

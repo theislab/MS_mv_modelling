@@ -34,6 +34,62 @@ from anndata import AnnData
 logger = logging.getLogger(__name__)
 
 
+class GlobalLinear(nn.Module):
+    def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
+        super().__init__()
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.n_features = n_features
+
+        self.weight = nn.Parameter(torch.empty(1, **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(1, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight)
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = x * self.weight
+
+        if self.bias is not None:
+            out += self.bias
+
+        return out
+
+
+class ElementwiseLinear(nn.Module):
+    def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
+        super().__init__()
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.n_features = n_features
+
+        self.weight = nn.Parameter(torch.empty(n_features, **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(n_features, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight)
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = x * self.weight
+
+        if self.bias is not None:
+            out += self.bias
+
+        return out
+
+
 class PROTVAE(BaseModuleClass):
     """Variational auto-encoder for proteomics data.
 
@@ -133,6 +189,7 @@ class PROTVAE(BaseModuleClass):
             use_layer_norm=use_layer_norm_decoder,
         )
 
+        """
         self.prob_net = nn.Sequential(
             FCLayers(
                 n_in=n_input,
@@ -145,7 +202,14 @@ class PROTVAE(BaseModuleClass):
             nn.Linear(n_hidden, n_input),
             nn.Sigmoid(),
         )
+        """
 
+        self.prob_net = nn.Sequential(
+            GlobalLinear(n_input),
+            nn.Sigmoid(),
+        )
+
+        
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -277,11 +341,11 @@ class PROTVAE(BaseModuleClass):
             kl_local=kl_divergence
         )
     
-    def _log_likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6, k=20):
+    def _log_likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6):
         px = Normal(px_mean, px_std)
 
         # @TODO: don't do unneccessary computation
-        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps)) + torch.log(torch.ones_like(x) / k)
+        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
         t2 = torch.log(torch.clamp(prob_detection, min=eps)) + px.log_prob(x)
 
         x_sig = (x != 0)
