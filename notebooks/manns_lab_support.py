@@ -278,6 +278,10 @@ def correct_batch(adata):
         plate_adata = adata[adata.obs["Plate"] == plate]
         mean_protein_per_plate = np.nanmean(plate_adata.X, axis=0)
         std_protein_per_plate = np.nanstd(plate_adata.X, axis=0)
+
+        # If only 1 cell exists in the plate, std_protein_per_plate will be 0. So we correct this.
+        # @TODO: would it be better not to do this correction and thereby get more nan's in the data?
+        std_protein_per_plate[std_protein_per_plate == 0] = std
         
         plate_adata.X = (((plate_adata.X - mean_protein_per_plate) / std_protein_per_plate) * std) + mean_protein
 
