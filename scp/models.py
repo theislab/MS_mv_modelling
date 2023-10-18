@@ -342,8 +342,8 @@ class PROTVAE(BaseModuleClass):
             loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_divergence
         )
 
-    # def sample(self):
-    #    raise NotImplementedError
+    def sample(self):
+        raise NotImplementedError
 
     def _get_reconstruction_loss(self, prob_detection, px_mean, px_std, x, mechanism_weight=1.0):
         m_obs = x != 0

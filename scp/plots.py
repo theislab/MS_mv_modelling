@@ -45,7 +45,7 @@ def plot_loss(history, n_skip=0, pad=3):
 
 
 def plot_protein_detection_probability_panel(
-    x, p_est, color="blue", title="MAIN - PROTVI"
+    x, p_est, color="blue", title="PROTVI"
 ):
     x_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
@@ -471,11 +471,11 @@ def plot_protein_detection_probability_panel_protDP(
     ax = axes[0]
     min_intensity = np.nanmin(x_protein)
     max_intensity = np.nanmax(x_protein)
-    x_main = np.linspace(min_intensity, max_intensity, 100)
-    y1 = sigmoid(beta_start[0] + beta_start[1] * x_main)
-    y2 = sigmoid(beta[0] + beta[1] * x_main)
-    ax.plot(x_main, y1, color="black", linewidth=1.2, linestyle="--", label="Start")
-    ax.plot(x_main, y2, color=color, linewidth=1.2, linestyle="--", label="Final")
+    x_step = np.linspace(min_intensity, max_intensity, 100)
+    y1 = sigmoid(beta_start[0] + beta_start[1] * x_step)
+    y2 = sigmoid(beta[0] + beta[1] * x_step)
+    ax.plot(x_step, y1, color="black", linewidth=1.2, linestyle="--", label="Start")
+    ax.plot(x_step, y2, color=color, linewidth=1.2, linestyle="--", label="Final")
     ax.scatter(x_protein, p_protein, color="black", linewidth=0, s=2, alpha=0.5)
     ax.set_xlabel("Avg. protein log-intensity")
     ax.set_ylabel("Detection probability")
