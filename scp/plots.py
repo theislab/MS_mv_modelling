@@ -1,0 +1,498 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+"""
+    Common plots used in multiple notebooks
+"""
+
+#############################################
+# scvi-tools plots
+#############################################
+
+
+def plot_loss(history, n_skip=0, pad=3):
+    fig, axes = plt.subplots(figsize=(16, 4), ncols=3, nrows=1)
+    fig.tight_layout(pad=pad)
+
+    ax = axes[0]
+    ax.plot(history["train_loss_epoch"].iloc[n_skip:])
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Total loss")
+    ax.set_title("Total loss")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[1]
+    ax.plot(history["reconstruction_loss_train"].iloc[n_skip:])
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Reconstruction loss")
+    ax.set_title("Reconstruction loss")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[2]
+    ax.plot(history["kl_local_train"].iloc[n_skip:])
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("KL-divergence")
+    ax.set_title("KL-divergence")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+#############################################
+# generic results plots
+#############################################
+
+
+def plot_protein_detection_probability_panel(
+    x, p_est, color="blue", title="MAIN - PROTVI"
+):
+    x_protein = np.nanmean(x, axis=0)
+    p_protein = 1 - np.mean(np.isnan(x), axis=0)
+    p_est_protein = p_est.mean(axis=0)
+
+    fig, axes = plt.subplots(figsize=(18, 5), ncols=4)
+    fig.suptitle(title, fontsize=16, y=1.05)
+    fig.tight_layout(pad=3)
+
+    ax = axes[0]
+    ax.scatter(
+        x_protein,
+        p_protein,
+        color="black",
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+        label="Observed",
+    )
+    ax.scatter(
+        x_protein,
+        p_est_protein,
+        color="blue",
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+        label="Predicted",
+    )
+    ax.set_xlabel("Avg. observed log-intensity")
+    ax.set_ylabel("Detection proportion")
+    ax.set_title("Avg. protein log-intensity vs. detection proportion")
+    ax.legend()
+    ax.grid(True)
+    ax.set_axisbelow(True)
+    ax.legend(markerscale=2)
+
+    _scatter_compare_protein_detection_proportion(
+        p_protein, p_est_protein, color=color, ax=axes[1]
+    )
+    _hist_compare_protein_detection_proportion_difference(
+        p_protein, p_est_protein, color=color, ax=axes[2]
+    )
+    _scatter_compare_protein_detection_proportion_difference(
+        x_protein, p_protein, p_est_protein, color=color, ax=axes[3]
+    )
+
+
+def _scatter_compare_protein_detection_proportion(
+    p_protein, p_est_protein, color="blue", ax=None
+):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    # r2 = scp.utils.r_squared(p_protein, p_est_protein)
+    # ax.text(0.03, 0.94, f"MSE: {mse:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"))
+
+    # pearson = pearsonr(obs_detection_proportion, pred_detection_proportion)
+    # ax.text(0.03, 0.90, f"Pearson corr.\n{pearson[0]:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"))
+
+    mse = np.mean((p_protein - p_est_protein) ** 2)
+    ax.text(
+        0.03,
+        0.94,
+        f"MSE: {mse:.3f}",
+        fontsize=10,
+        bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
+        transform=ax.transAxes,
+    )
+
+    ax.scatter(
+        p_protein,
+        p_est_protein,
+        color=color,
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+    )
+    ax.plot([0, 1], [0, 1], color="black", linewidth=1.2, linestyle="--")
+    ax.set(xlim=[0, 1], ylim=[0, 1])
+    ax.set_xlabel("Observed detection proportion")
+    ax.set_ylabel("Predicted detection proportion")
+    ax.set_title("Observed vs. predicted detection proportion")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def _hist_compare_protein_detection_proportion_difference(
+    p_protein, p_est_protein, color="blue", ax=None
+):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    diff = p_est_protein - p_protein
+    ax.hist(diff, bins=60, color=color, edgecolor="black", linewidth=1.2)
+    ax.set_ylabel("Number of proteins")
+    ax.set_xlabel("Predicted - observed detection proportion")
+    ax.set_title("Difference in detection proportion between\n observed and predicted")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def _scatter_compare_protein_detection_proportion_difference(
+    x_protein, p_protein, p_est_protein, color="blue", ax=None
+):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    diff = p_est_protein - p_protein
+    ax.scatter(
+        x_protein, diff, color=color, edgecolor="black", linewidth=0, s=6, alpha=0.5
+    )
+    ax.set_xlabel("Avg. observed log-intensity")
+    ax.set_ylabel("Predicted - observed detection proportion")
+    ax.set_title("Difference in detection proportion \nvs. avg. protein intensity")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
+    fig, axes = plt.subplots(figsize=(18, 6), ncols=3)
+    fig.tight_layout(pad=4)
+    fig.suptitle(title, fontsize=16, y=1.05)
+
+    x_est_obs = x_est.copy()
+    x_est_obs[np.isnan(x)] = np.nan
+
+    x_est_miss = x_est.copy()
+    x_est_miss[~np.isnan(x)] = np.nan
+
+    protein_with_missing_intensities_mask = np.isnan(x).any(axis=0)
+
+    x_obs_protein2 = np.nanmean(x[:, protein_with_missing_intensities_mask], axis=0)
+    x_est_obs_protein2 = np.nanmean(
+        x_est_obs[:, protein_with_missing_intensities_mask], axis=0
+    )
+    x_est_miss_protein2 = np.nanmean(
+        x_est_miss[:, protein_with_missing_intensities_mask], axis=0
+    )
+
+    ax = axes[0]
+    ax.plot(
+        [0, x_obs_protein2.max()],
+        [0, x_est_obs_protein2.max()],
+        color="black",
+        linewidth=1.2,
+        linestyle="--",
+    )
+    ax.scatter(
+        x_obs_protein2,
+        x_est_obs_protein2,
+        color="red",
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+    )
+    ax.scatter(
+        np.mean(x_obs_protein2),
+        np.mean(x_est_obs_protein2),
+        color="cyan",
+        edgecolor="black",
+        linewidth=1,
+        s=40,
+        alpha=1,
+    )
+    ax.set_xlabel("Observed protein log-intensity")
+    ax.set_ylabel("Predicted protein log-intensity")
+    ax.set_title("Predicted intensity vs. observed intensity \n- for each protein")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[1]
+    min_v = min(x_est_obs_protein2.min(), x_est_miss_protein2.min())
+    max_v = max(x_est_obs_protein2.max(), x_est_miss_protein2.max())
+    ax.plot(
+        [min_v, max_v], [min_v, max_v], color="black", linewidth=1.2, linestyle="--"
+    )
+    ax.scatter(
+        x_est_miss_protein2,
+        x_est_obs_protein2,
+        color="red",
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+    )
+    ax.scatter(
+        np.mean(x_est_miss_protein2),
+        np.mean(x_est_obs_protein2),
+        color="cyan",
+        edgecolor="black",
+        linewidth=1,
+        s=40,
+        alpha=1,
+    )
+    ax.set_xlabel("Predicted missing protein log intensity")
+    ax.set_ylabel("Predicted observed protein log intensity")
+    ax.set_title(
+        "Predicted observed intensity vs. predicted missing intensity \n- for each protein"
+    )
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[2]
+    diff = x_est_obs_protein2 - x_est_miss_protein2
+    ax.hist(diff, bins=60, color="red", edgecolor="black", linewidth=1.2)
+    ax.set_ylabel("Number of proteins")
+    ax.set_xlabel(
+        "Avg. present protein log-intensity - avg. missing protein log-intensity"
+    )
+    ax.set_title(
+        "Difference in intensity between present and \nmissing intensities - for each protein"
+    )
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def plot_model_intensity_comparison(
+    x,
+    x_est_obs_protein1,
+    x_est_miss_protein1,
+    x_est_obs_protein2,
+    x_est_miss_protein2,
+    model1_name,
+    model2_name,
+):
+    proteins_with_missing_intensities_mask = np.isnan(x).any(axis=0)
+
+    x_est_miss_protein1 = x_est_miss_protein1[proteins_with_missing_intensities_mask]
+    x_est_obs_protein1 = x_est_obs_protein1[proteins_with_missing_intensities_mask]
+
+    x_est_obs_protein2 = x_est_obs_protein2[proteins_with_missing_intensities_mask]
+    x_est_miss_protein2 = x_est_miss_protein2[proteins_with_missing_intensities_mask]
+
+    from sklearn.linear_model import LinearRegression
+
+    lm = LinearRegression()
+
+    fig, axes = plt.subplots(figsize=(18, 6), ncols=3)
+    fig.tight_layout(pad=3)
+    fig.suptitle(f"{model1_name} vs {model2_name}", fontsize=16, y=1)
+
+    ax = axes[0]
+    ax.scatter(
+        x_est_miss_protein1,
+        x_est_obs_protein1,
+        color="blue",
+        edgecolor="black",
+        linewidth=0,
+        s=4,
+        alpha=0.3,
+    )
+    ax.scatter(
+        x_est_miss_protein2,
+        x_est_obs_protein2,
+        color="red",
+        edgecolor="purple",
+        linewidth=0,
+        s=4,
+        alpha=0.3,
+    )
+
+    v1 = min(
+        x_est_obs_protein1.min(),
+        x_est_miss_protein1.min(),
+        x_est_obs_protein2.min(),
+        x_est_miss_protein2.min(),
+    )
+    v2 = max(
+        x_est_obs_protein1.max(),
+        x_est_miss_protein1.max(),
+        x_est_obs_protein2.max(),
+        x_est_miss_protein2.max(),
+    )
+
+    ax.plot(
+        [v1, v2],
+        [v1, v2],
+        color="black",
+        linewidth=1.2,
+        linestyle="--",
+        alpha=0.8,
+    )
+
+    ## model 1
+    lm.fit(x_est_miss_protein1.reshape(-1, 1), x_est_obs_protein1.reshape(-1, 1))
+    ax.plot(
+        [v1, v2],
+        [
+            lm.intercept_[0] + lm.coef_[0] * v1,
+            lm.intercept_[0] + lm.coef_[0] * v2,
+        ],
+        color="black",
+        linewidth=4,
+        linestyle="-",
+        solid_capstyle="round",
+    )
+    ax.plot(
+        [v1, v2],
+        [
+            lm.intercept_[0] + lm.coef_[0] * v1,
+            lm.intercept_[0] + lm.coef_[0] * v2,
+        ],
+        color="blue",
+        linewidth=2,
+        linestyle="-",
+        solid_capstyle="round",
+        label=model1_name,
+    )
+
+    ## model 2
+    lm.fit(x_est_miss_protein2.reshape(-1, 1), x_est_obs_protein2.reshape(-1, 1))
+    ax.plot(
+        [v1, v2],
+        [
+            lm.intercept_[0] + lm.coef_[0] * v1,
+            lm.intercept_[0] + lm.coef_[0] * v2,
+        ],
+        color="black",
+        linewidth=3,
+        linestyle="-",
+        solid_capstyle="round",
+    )
+    ax.plot(
+        [v1, v2],
+        [
+            lm.intercept_[0] + lm.coef_[0] * v1,
+            lm.intercept_[0] + lm.coef_[0] * v2,
+        ],
+        color="red",
+        linewidth=2,
+        linestyle="-",
+        solid_capstyle="round",
+        label=model2_name,
+    )
+
+    ax.set_xlabel("Predicted missing protein log intensity")
+    ax.set_ylabel("Predicted observed protein log intensity")
+    ax.set_title(
+        "Predicted missing intensity vs. predicted observed intensity - for each protein"
+    )
+    ax.legend(markerscale=2)
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[1]
+    ax.scatter(
+        x_est_miss_protein1,
+        x_est_miss_protein2,
+        color="blue",
+        edgecolor="purple",
+        linewidth=0,
+        s=4,
+        alpha=0.3,
+    )
+    v1 = min(x_est_miss_protein2.min(), x_est_miss_protein1.min())
+    v2 = max(x_est_miss_protein2.max(), x_est_miss_protein1.max())
+    ax.plot(
+        [v1, v2],
+        [v1, v2],
+        color="black",
+        linewidth=1.2,
+        linestyle="--",
+        alpha=0.8,
+    )
+    ax.set_xlabel(f"Missing protein log intensity ({model1_name})")
+    ax.set_ylabel(f"Missing protein log intensity ({model2_name})")
+    ax.set_title("Missing intensity - for each protein")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+    ax = axes[2]
+    ax.scatter(
+        x_est_obs_protein1,
+        x_est_obs_protein2,
+        color="blue",
+        edgecolor="purple",
+        linewidth=0,
+        s=4,
+        alpha=0.3,
+    )
+    v1 = min(x_est_obs_protein2.min(), x_est_obs_protein1.min())
+    v2 = max(x_est_obs_protein2.max(), x_est_obs_protein1.max())
+    ax.plot(
+        [v1, v2],
+        [v1, v2],
+        color="black",
+        linewidth=1.2,
+        linestyle="--",
+        alpha=0.8,
+    )
+    ax.set_xlabel(f"Predicted observed protein log intensity ({model1_name})")
+    ax.set_ylabel(f"Predicted observed protein log intensity ({model2_name})")
+    ax.set_title("Observed intensity - for each protein")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+#############################################
+# protDP plots
+#############################################
+
+
+# @TODO: consider creating a ProtDP wrapper class for protdp_result
+def plot_protein_detection_probability_panel_protDP(
+    x, protdp_result, color="blue", title="protDP"
+):
+    beta = protdp_result["beta"]
+    beta_start = protdp_result["betaStart"]
+
+    x_protein = np.nanmean(x, axis=0)
+    p_protein = 1 - np.mean(np.isnan(x), axis=0)
+
+    sigmoid = lambda x: 1 / (1 + np.exp(-x))
+
+    fig, axes = plt.subplots(figsize=(18, 5), ncols=4)
+    fig.tight_layout(pad=4)
+    fig.suptitle(title, fontsize=16, y=1.05)
+
+    ax = axes[0]
+    min_intensity = np.nanmin(x_protein)
+    max_intensity = np.nanmax(x_protein)
+    x_main = np.linspace(min_intensity, max_intensity, 100)
+    y1 = sigmoid(beta_start[0] + beta_start[1] * x_main)
+    y2 = sigmoid(beta[0] + beta[1] * x_main)
+    ax.plot(x_main, y1, color="black", linewidth=1.2, linestyle="--", label="Start")
+    ax.plot(x_main, y2, color=color, linewidth=1.2, linestyle="--", label="Final")
+    ax.scatter(x_protein, p_protein, color="black", linewidth=0, s=2, alpha=0.5)
+    ax.set_xlabel("Avg. protein log-intensity")
+    ax.set_ylabel("Detection probability")
+    ax.set_title("Detection probability vs. avg. protein intensity")
+    ax.set_ylim([-0.1, 1.1])
+    ax.grid(True)
+    ax.legend()
+    ax.set_axisbelow(True)
+
+    p_est = sigmoid(beta[0] + beta[1] * x_protein)
+
+    _scatter_compare_protein_detection_proportion(
+        p_protein, p_est, color=color, ax=axes[1]
+    )
+    _hist_compare_protein_detection_proportion_difference(
+        p_protein, p_est, color=color, ax=axes[2]
+    )
+    _scatter_compare_protein_detection_proportion_difference(
+        x_protein, p_protein, p_est, color=color, ax=axes[3]
+    )

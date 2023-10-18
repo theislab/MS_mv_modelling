@@ -1,6 +1,5 @@
-
 import logging
-from typing import Callable, Iterable, Literal, Optional, List
+from typing import Callable, Iterable, Literal, Optional, List, Sequence
 
 import numpy as np
 import torch
@@ -34,6 +33,7 @@ from anndata import AnnData
 logger = logging.getLogger(__name__)
 
 
+## nn modules
 class GlobalLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
         super().__init__()
@@ -90,6 +90,7 @@ class ElementwiseLinear(nn.Module):
         return out
 
 
+## module
 class PROTVAE(BaseModuleClass):
     """Variational auto-encoder for proteomics data.
 
@@ -209,7 +210,6 @@ class PROTVAE(BaseModuleClass):
             nn.Sigmoid(),
         )
 
-        
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -230,7 +230,7 @@ class PROTVAE(BaseModuleClass):
 
     @auto_move_data
     def inference(
-        self, 
+        self,
         x,
         batch_index,
         cont_covs=None,
@@ -241,7 +241,7 @@ class PROTVAE(BaseModuleClass):
         Runs the inference (encoder) model.
         """
         x_ = x
-        
+
         if self.log_variational:
             x_ = torch.log(1 + x_)
 
@@ -281,7 +281,7 @@ class PROTVAE(BaseModuleClass):
 
     @auto_move_data
     def generative(
-        self, 
+        self,
         z,
         batch_index,
         cont_covs=None,
@@ -303,11 +303,7 @@ class PROTVAE(BaseModuleClass):
         else:
             categorical_input = ()
 
-        px_mean, px_var = self.decoder(
-            decoder_input,
-            batch_index,
-            *categorical_input
-        )
+        px_mean, px_var = self.decoder(decoder_input, batch_index, *categorical_input)
         prob_detection = self.prob_net(px_mean)
 
         return {
@@ -316,14 +312,16 @@ class PROTVAE(BaseModuleClass):
             "prob_detection": prob_detection,
         }
 
-    def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
+    def loss(
+        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
+    ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         px_mean = generative_outputs["px_mean"]
         px_std = generative_outputs["px_std"]
         prob_detection = generative_outputs["prob_detection"]
-        
+
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
@@ -336,11 +334,12 @@ class PROTVAE(BaseModuleClass):
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
         return LossOutput(
-            loss=loss, 
-            reconstruction_loss=reconst_loss, 
-            kl_local=kl_divergence
+            loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_divergence
         )
-    
+
+    #def sample(self):
+    #    raise NotImplementedError
+
     def _log_likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6):
         px = Normal(px_mean, px_std)
 
@@ -348,7 +347,7 @@ class PROTVAE(BaseModuleClass):
         t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
         t2 = torch.log(torch.clamp(prob_detection, min=eps)) + px.log_prob(x)
 
-        x_sig = (x != 0)
+        x_sig = x != 0
         log_likelihood = torch.empty_like(x)
         log_likelihood[~x_sig] = t1[~x_sig]
         log_likelihood[x_sig] = t2[x_sig]
@@ -356,8 +355,74 @@ class PROTVAE(BaseModuleClass):
         return log_likelihood
 
 
+## base model
+class ProteinMixin:
+    @torch.inference_mode()
+    def impute(
+        self,
+        adata: Optional[AnnData] = None,
+        indices: Optional[Sequence[int]] = None,
+        batch_size: Optional[int] = None,
+    ):
+        """
+        Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData
+            If None, defaults to the AnnData object used to initialize the model
+
+        indices
+            Indices of cells to use for imputation
+
+        batch_size
+            Batch size to use for imputation
+
+        Returns
+        -------
+        imputated
+            Tuple of imputed protein intensities, imputed detection probabilities based on the `indices` provided
+
+        """
+        adata = self._validate_anndata(adata)
+
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+
+        if batch_size is None:
+            batch_size = adata.n_obs
+
+        scdl = self._make_data_loader(
+            adata=adata,
+            indices=indices,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+
+        intensity_list = []
+        detection_probability_list = []
+        for tensors in scdl:
+            _, generative_outputs = self.module.forward(
+                tensors=tensors, compute_loss=False
+            )
+
+            px_mean = generative_outputs["px_mean"].cpu().numpy()
+            prob = generative_outputs["prob_detection"].cpu().numpy()
+
+            intensity_list.append(px_mean)
+            detection_probability_list.append(prob)
+
+        intensities = np.concatenate(intensity_list, axis=0)
+        detection_probabilities = np.concatenate(detection_probability_list, axis=0)
+
+        return intensities, detection_probabilities
+
+
+## model
 class PROTVI(
     VAEMixin,
+    ProteinMixin,
     UnsupervisedTrainingMixin,
     BaseModelClass,
 ):
@@ -406,7 +471,7 @@ class PROTVI(
 
         self.module = PROTVAE(
             n_input=self.summary_stats.n_vars,
-            n_batch = n_batch,
+            n_batch=n_batch,
             n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
             n_cats_per_cov=n_cats_per_cov,
             n_hidden=n_hidden,
@@ -419,9 +484,8 @@ class PROTVI(
 
         self._model_summary_string = (
             "PROTVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: , latent_distribution: {}"
-        ).format(
-            n_hidden, n_latent, n_layers, dropout_rate, latent_distribution)
-        
+        ).format(n_hidden, n_latent, n_layers, dropout_rate, latent_distribution)
+
         self.init_params_ = self._get_init_params(locals())
 
     @classmethod
