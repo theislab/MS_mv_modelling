@@ -4,7 +4,7 @@ from typing import Callable, Iterable, Literal, Optional, List, Sequence
 import numpy as np
 import torch
 from torch import nn as nn
-from torch.distributions import Normal
+from torch.distributions import Normal, Bernoulli
 from torch.distributions import kl_divergence as kl
 
 from scvi import REGISTRY_KEYS
@@ -313,7 +313,12 @@ class PROTVAE(BaseModuleClass):
         }
 
     def loss(
-        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
+        self,
+        tensors,
+        inference_outputs,
+        generative_outputs,
+        kl_weight: float = 1.0,
+        mechanism_weight: float = 1.0,
     ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -325,11 +330,11 @@ class PROTVAE(BaseModuleClass):
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
-        ll = self._log_likelihood(prob_detection, px_mean, px_std, x)
-
         kl_divergence = kl(qz, pz).sum(dim=-1)
         weighted_kl_local = kl_weight * kl_divergence
-        reconst_loss = -ll.sum(-1)
+        reconst_loss = self._get_reconstruction_loss(
+            prob_detection, px_mean, px_std, x, mechanism_weight=mechanism_weight
+        )
 
         loss = torch.mean(reconst_loss + weighted_kl_local)
 
@@ -337,22 +342,23 @@ class PROTVAE(BaseModuleClass):
             loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_divergence
         )
 
-    #def sample(self):
+    # def sample(self):
     #    raise NotImplementedError
 
-    def _log_likelihood(self, prob_detection, px_mean, px_std, x, eps=1e-6):
-        px = Normal(px_mean, px_std)
+    def _get_reconstruction_loss(self, prob_detection, px_mean, px_std, x, mechanism_weight=1.0):
+        m_obs = x != 0
+        m_mis = ~m_obs
 
-        # @TODO: don't do unneccessary computation
-        t1 = torch.log(torch.clamp(1 - prob_detection, min=eps))
-        t2 = torch.log(torch.clamp(prob_detection, min=eps)) + px.log_prob(x)
+        ll_x = Normal(px_mean, px_std).log_prob(x)
+        ll_m = mechanism_weight * Bernoulli(prob_detection).log_prob(m_obs.type(torch.float32))
 
-        x_sig = x != 0
-        log_likelihood = torch.empty_like(x)
-        log_likelihood[~x_sig] = t1[~x_sig]
-        log_likelihood[x_sig] = t2[x_sig]
+        ll = torch.empty_like(x)
+        ll[m_obs] = ll_x[m_obs] + ll_m[m_obs]
+        ll[m_mis] = ll_m[m_mis]
 
-        return log_likelihood
+        nll = -torch.sum(ll, dim=-1)
+
+        return nll
 
 
 ## base model
