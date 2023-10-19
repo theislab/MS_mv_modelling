@@ -3,15 +3,10 @@ import numpy as np
 import scanpy as sc
 import os
 
+from scp.utils import reshape_anndata_like, fill_if_nan, get_coverage
+
 """
-
     Functions to load and preprocess the dataset from Mann's lab.
-     - loading
-     - preprocessing / filtering
-     - combining
-     - summarizing
-     - batch correcting
-
 """
 
 
@@ -226,9 +221,9 @@ def load_pilot_data(dir: str):
     )
 
     # remove duplicate samples based on ID_main
-    ID_main_counts = obs["ID_main"].value_counts()
-    ID_main_unique_idx = ID_main_counts[ID_main_counts == 1].index
-    obs = obs[obs["ID_main"].isin(ID_main_unique_idx)]
+    id_main_counts = obs["ID_main"].value_counts()
+    id_main_unique_idx = id_main_counts[id_main_counts == 1].index
+    obs = obs[obs["ID_main"].isin(id_main_unique_idx)]
 
     ## create adata from data, vars, obs
     obs = pd.merge(obs, stats, how="inner", left_index=True, right_index=True)
@@ -273,8 +268,8 @@ def filter(adata, min_protein_completeness=0.2):
     return adata
 
 
-def preprocess(adata, filter_cells=0):
-    print(f"input: {adata.shape}")
+def preprocess(adata, filter_cells=0, verbose=True):
+    print(f"preprocess input: {adata.shape}")
 
     sc.pp.filter_genes(adata, min_cells=1)
     print(f"sc.pp.filter_genes: {adata.shape}")
@@ -288,110 +283,21 @@ def preprocess(adata, filter_cells=0):
     return adata
 
 
-def combine_PILOT_and_MAIN(pilot_adata, main_adata):
-    assert (
-        pilot_adata.shape[0] < main_adata.shape[0]
-    ), "num patients in pilot data should be smaller than main data. Did you swap the order of the datasets in the function arguments?"
-
-    #  create AnnData object copy
-    combined_adata = main_adata.copy()
-
-    # MAIN layer
-    combined_adata.layers["MAIN"] = combined_adata.X.copy()
-
-    # PILOT layer
-    main_ids = set(main_adata.obs_names)
-    pilot_ids = set(pilot_adata.obs_names)
-    ids = list(main_ids.intersection(pilot_ids))
-
-    main_proteins = set(main_adata.var_names)
-    pilot_proteins = set(pilot_adata.var_names)
-    proteins = list(main_proteins.intersection(pilot_proteins))
-
-    empty = pd.DataFrame(
-        np.zeros(main_adata.shape),
-        index=main_adata.obs_names,
-        columns=main_adata.var_names,
-    )
-    empty[:] = np.nan
-
-    # extract the proteins and samples that are in both datasets from the pilot dataset
-    # @IMPORTANT: this will reorder the rows and columns of the pilot dataset... so we need to reorder them back
-    pilot = empty.combine_first(pilot_adata[ids, proteins].to_df())
-    pilot = pilot.loc[main_adata.obs_names, main_adata.var_names]
-
-    combined_adata.layers["PILOT"] = pilot.values
-
-    print(
-        f"Nr. patients | main: {len(main_ids)}, pilot: {len(pilot_ids)}, in both: {len(ids)}"
-    )
-    print(
-        f"Nr. proteins | main: {len(main_proteins)}, pilot: {len(pilot_proteins)}, in both: {len(proteins)}"
-    )
-
-    # ALL layer - combine main and pilot data
-    # @IMPORTANT: this will reorder the rows and columns of the pilot dataset... so we need to reorder them back
-    both = main_adata.to_df().combine_first(pilot_adata[ids, proteins].to_df())
-    both = both.loc[main_adata.obs_names, main_adata.var_names]
-    combined_adata.layers["combined"] = both.values
-
-    return combined_adata
-
-
-def print_combined_summary(combined_adata):
-    ## PILOT
-    pilot_patients_filter = np.any(~np.isnan(combined_adata.layers["PILOT"]), axis=1)
-    pilot_protein_filter = np.any(~np.isnan(combined_adata.layers["PILOT"]), axis=0)
-
-    print(
-        f"Percentage of patients in both PILOT and MAIN (patients: {np.sum(pilot_patients_filter)}):"
-    )
-
-    data = combined_adata[pilot_patients_filter]
-    n = np.sum(data.layers["PILOT"] == data.layers["PILOT"])
-    n_total = data.shape[0] * data.shape[1]
-
-    print(
-        f"  {data.shape[1]} unique proteins (all those in MAIN):      {n / n_total * 100:.2f}%"
-    )
-
-    data = combined_adata[pilot_patients_filter, pilot_protein_filter]
-    n = np.sum(data.layers["PILOT"] == data.layers["PILOT"])
-    n_total = data.shape[0] * data.shape[1]
-
-    print(
-        f"  {data.shape[1]} unique proteins (in both MAIN and PILOT): {n / n_total * 100:.2f}%"
-    )
-
-    ## MAIN
-    n_combined = np.sum(
-        combined_adata.layers["combined"] == combined_adata.layers["combined"]
-    )
-    n_pilot = np.sum(combined_adata.layers["PILOT"] == combined_adata.layers["PILOT"])
-    n_main = np.sum(combined_adata.layers["MAIN"] == combined_adata.layers["MAIN"])
-    n_total = combined_adata.shape[0] * combined_adata.shape[1]
-
-    print(
-        f"\nPercentage of observed intensities using MAIN patient-protein layout (patients: {combined_adata.shape[0]}, proteins: {combined_adata.shape[1]})"
-    )
-    print(f"  MAIN:     {n_main / n_total * 100:.2f}%")
-    print(f"  PILOT:    {n_pilot / n_total * 100:.2f}%")
-    print(f"  combined: {n_combined / n_total * 100:.2f}%")
-
-
 def correct_batch(adata):
     """Corrects batch for anndata.X - keeping the original reference to X"""
     mean_protein = np.nanmean(adata.X, axis=0)
 
+    plates = np.unique(adata.obs["Plate"][~adata.obs["Plate"].isna()])
+
     stds_plates = []
-    for plate in np.unique(adata.obs["Plate"]):
+    for plate in plates:
         plate_adata = adata[adata.obs["Plate"] == plate]
         std_protein_per_plate = np.nanstd(plate_adata.X, axis=0)
         stds_plates.append(std_protein_per_plate)
 
     std = np.nanmean(stds_plates)
 
-    for plate in np.unique(adata.obs["Plate"]):
+    for plate in plates:
         plate_adata = adata[adata.obs["Plate"] == plate]
         mean_protein_per_plate = np.nanmean(plate_adata.X, axis=0)
         std_protein_per_plate = np.nanstd(plate_adata.X, axis=0)
@@ -405,3 +311,33 @@ def correct_batch(adata):
         ) + mean_protein
 
     # result stored in adata.X
+
+
+def load_data(
+    main_dir: str, pilot_dir: str, correct_batch: bool = False, verbose: bool = True
+):
+    main_adata = load_main_data(main_dir)
+    main_adata = preprocess(main_adata, verbose=verbose)
+
+    pilot_adata = load_pilot_data(pilot_dir)
+    pilot_adata = preprocess(pilot_adata, verbose=verbose)
+
+    pilot_adata = reshape_anndata_like(adata=pilot_adata, adata_like=main_adata)
+
+    if correct_batch:
+        correct_batch(main_adata)
+        correct_batch(pilot_adata)
+
+    adata = main_adata
+    adata.layers["main"] = main_adata.X.copy()
+    adata.layers["pilot"] = pilot_adata.X.copy()
+
+    if verbose:
+        x_combined = fill_if_nan(main_adata.X, pilot_adata.X)
+
+        print()
+        print(f"main intensity coverage:     {get_coverage(main_adata.X):.2%}")
+        print(f"pilot intensity coverage:    {get_coverage(pilot_adata.X):.2%}")
+        print(f"combined intensity coverage: {get_coverage(x_combined):.2%}")
+
+    return adata
