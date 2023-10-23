@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import scanpy as sc
 import os
+from scipy.stats import spearmanr, pearsonr
 
 from scp.utils import reshape_anndata_like, fill_if_nan, get_coverage
 
@@ -341,3 +342,26 @@ def load_data(
         print(f"combined intensity coverage: {get_coverage(x_combined):.2%}")
 
     return adata
+
+
+def compute_overlapping_protein_correlations(x1, x2, metrics=["pearson", "spearman"]):
+    overlap_mask = ~np.isnan(x1) & ~np.isnan(x2)
+    idx_proteins = np.where(overlap_mask.sum(axis=0) >= 2)[0]
+
+    corrs = {metric: [] for metric in metrics}
+
+    for idx in idx_proteins:
+        overlap_cols = overlap_mask[:, idx]
+        
+        x1_protein = x1[overlap_cols, idx]
+        x2_protein = x2[overlap_cols, idx]
+
+        if "spearman" in metrics:
+            spearman = spearmanr(x1_protein, x2_protein)[0]
+            corrs["spearman"].append(spearman)
+        
+        if "pearson" in metrics:
+            pearson = pearsonr(x1_protein, x2_protein)[0]
+            corrs["pearson"].append(pearson)
+    
+    return corrs

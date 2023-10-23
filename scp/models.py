@@ -346,15 +346,15 @@ class PROTVAE(BaseModuleClass):
         raise NotImplementedError
 
     def _get_reconstruction_loss(self, prob_detection, px_mean, px_std, x, mechanism_weight=1.0):
-        m_obs = x != 0
-        m_mis = ~m_obs
+        m_obs = (x != 0)
+        m_miss = ~m_obs
 
         ll_x = Normal(px_mean, px_std).log_prob(x)
         ll_m = mechanism_weight * Bernoulli(prob_detection).log_prob(m_obs.type(torch.float32))
 
         ll = torch.empty_like(x)
         ll[m_obs] = ll_x[m_obs] + ll_m[m_obs]
-        ll[m_mis] = ll_m[m_mis]
+        ll[m_miss] = ll_m[m_miss]
 
         nll = -torch.sum(ll, dim=-1)
 
