@@ -4,7 +4,7 @@ import scanpy as sc
 import os
 from scipy.stats import spearmanr, pearsonr
 
-from scp.utils import reshape_anndata_like, fill_if_nan, get_coverage
+from scp.utils import reshape_anndata_like, fill_if_nan, get_coverage, filter_by_detection_proportion
 
 """
     Functions to load and preprocess the dataset from Mann's lab.
@@ -129,6 +129,10 @@ def load_main_data(dir: str):
 
     adata.strings_to_categoricals()
 
+    adata = adata[~adata.obs["Qalb"].isna()]
+    adata = adata[[e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]]]
+    adata = adata[(adata.obs[["Erythrocytes"]] == adata.obs[["Erythrocytes"]]).values]
+
     return adata
 
 
@@ -243,18 +247,14 @@ def load_pilot_data(dir: str):
 
     adata.strings_to_categoricals()
 
-    return adata
-
-
-def filter(adata, min_protein_completeness=0.2):
-    # Filtering from Christine.
-
-    # self.adata = self.adata[self.adata.obs["Qalb"] == self.adata.obs["Qalb"]]
     adata = adata[~adata.obs["Qalb"].isna()]
-
     adata = adata[[e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]]]
     adata = adata[(adata.obs[["Erythrocytes"]] == adata.obs[["Erythrocytes"]]).values]
 
+    return adata
+
+
+def filter_by_detection_proportion_by_patient(adata, min_protein_completeness=0.2):
     adata.var["filter"] = 1
     for group in np.unique(adata.obs["Diagnosis_group"]):
         sub = adata[adata.obs["Diagnosis_group"] == group]
@@ -264,12 +264,10 @@ def filter(adata, min_protein_completeness=0.2):
         ).astype(int)
 
     adata.var["filter"] = adata.var["filter"].astype(bool)
-    adata = adata[:, ~adata.var["filter"]].copy()
-
-    return adata
+    adata._inplace_subset_var(~adata.var["filter"])
 
 
-def preprocess(adata, filter_cells=0, verbose=True):
+def preprocess(adata, filter_cells=0, min_protein_completeness=0.2, verbose=True):
     print(f"preprocess input: {adata.shape}")
 
     sc.pp.filter_genes(adata, min_cells=1)
@@ -278,7 +276,7 @@ def preprocess(adata, filter_cells=0, verbose=True):
     sc.pp.filter_cells(adata, min_genes=filter_cells)
     print(f"sc.pp.filter_cells: {adata.shape}")
 
-    adata = filter(adata)
+    filter_by_detection_proportion_by_patient(adata, min_protein_completeness=min_protein_completeness)
     print(f"filter: {adata.shape}")
 
     return adata

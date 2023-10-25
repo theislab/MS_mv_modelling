@@ -43,10 +43,37 @@ def plot_loss(history, n_skip=0, pad=3):
 # generic results plots
 #############################################
 
+def scatter_protein_detection_probability_and_intensity(x, title=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-def plot_protein_detection_probability_panel(
-    x, p_est, color="blue", title="PROTVI"
-):
+    x_obs_protein = np.nanmean(x, axis=0)
+    p_protein = 1 - np.mean(np.isnan(x), axis=0)
+
+    ax.scatter(x_obs_protein, p_protein, color="blue", alpha=1, s=6)
+    ax.set_title(title)
+    ax.set_xlabel("protein log intensity")
+    ax.set_ylabel("detection probability")
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def scatter_sample_mean_and_variance(x, title=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    sample_mean = np.nanmean(x, axis=1)
+    sample_var = np.nanvar(x, axis=1)
+
+    ax.scatter(sample_mean, sample_var, color="blue", s=2)
+    ax.set_xlabel("Sample mean")
+    ax.set_ylabel("Sample variance")
+    ax.set_title(title)
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def plot_protein_detection_probability_panel(x, p_est, color="blue", title="PROTVI"):
     x_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
     p_est_protein = p_est.mean(axis=0)
@@ -93,6 +120,7 @@ def plot_protein_detection_probability_panel(
     _scatter_compare_protein_detection_proportion_difference(
         x_protein, p_protein, p_est_protein, color=color, ax=axes[3]
     )
+
 
 
 def _scatter_compare_protein_detection_proportion(
