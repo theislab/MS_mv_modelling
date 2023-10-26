@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
+
 ## AnnData
 def filter_by_detection_proportion(adata, min_coverage=0.1):
     detection_proportion = np.mean(~np.isnan(adata.X), axis=0)
@@ -89,7 +90,7 @@ def prepare_anndata_for_R(adata):
     for column in adata.obs.columns:
         if pd.api.types.is_categorical_dtype(adata.obs[column]):
             adata.obs.drop(column, axis=1, inplace=True)
-            #adata.obs[column] = adata.obs[column].astype(str)
+            # adata.obs[column] = adata.obs[column].astype(str)
 
     return adata
 
@@ -116,6 +117,7 @@ def r_squared(x, y):
 
 
 ## other imputation models
+
 
 def impute_downshifted_normal_sample(
     x,
@@ -164,7 +166,6 @@ def impute_downshifted_normal_local(
     scale=0.3,
     shift=1.8,
 ):
-    
     x = x.copy()
     missing_indices = np.where(np.isnan(x))
 
@@ -191,20 +192,22 @@ def impute_sample_min(x):
 
     return x
 
+
 # @TODO: add these too
 """
 def impute_ppca(
-    self,
+    adata,
     ncomp=2,
 ):
-    self.adata.X[self.missing_indices] = np.nan
-    genes_before = self.adata.shape[1]
-    min_entry = np.nanmin(self.adata.X) - 1
-    self.adata.X -= min_entry
-    sc.pp.filter_genes(self.adata, min_cells=ncomp)
-    self.adata.X += min_entry
-    self.missing_indices = np.where(np.isnan(self.adata.X))
-    genes_after = self.adata.shape[1]
+    
+    adata = adata.copy()
+
+    genes_before = adata.shape[1]
+    min_entry = np.nanmin(adata.X) - 1
+    adata.X -= min_entry
+    sc.pp.filter_genes(adata, min_cells=ncomp)
+    adata.X += min_entry
+    genes_after = adata.shape[1]
     print(
         "%d genes were filtered for the probabilistic PCA! %d genes left!"
         % (genes_before - genes_after, genes_after)
@@ -213,7 +216,7 @@ def impute_ppca(
     import statsmodels.api as sm
 
     pc = sm.multivariate.PCA(
-        data=self.adata.X,
+        data=adata.X,
         ncomp=ncomp,
         standardize=True,
         normalize=True,
@@ -224,7 +227,7 @@ def impute_ppca(
         max_em_iter=100,
     )
     imputed_data = pc._adjusted_data
-    self.adata.X = imputed_data
+    return imputed_data
 
 
 def impute_ppca_batch(

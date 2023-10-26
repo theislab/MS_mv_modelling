@@ -43,6 +43,7 @@ def plot_loss(history, n_skip=0, pad=3):
 # generic results plots
 #############################################
 
+
 def scatter_protein_detection_probability_and_intensity(x, title=None, ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -120,7 +121,6 @@ def plot_protein_detection_probability_panel(x, p_est, color="blue", title="PROT
     _scatter_compare_protein_detection_proportion_difference(
         x_protein, p_protein, p_est_protein, color=color, ax=axes[3]
     )
-
 
 
 def _scatter_compare_protein_detection_proportion(
