@@ -30,7 +30,7 @@ def simulate_two_groups(
     n_group2=500,
     n_proteins=900,
     n_de_proteins=300,
-    log2_fold_change=2,
+    log2_fold_change=1,
 ):
     """
     Simulate two groups of cells with differentially expressed proteins.
@@ -51,12 +51,12 @@ def simulate_two_groups(
     var_protein = 0.3 * np.ones(n_proteins)
 
     x = np.random.normal(mean_protein, var_protein, (n_cells, n_proteins))
-    x[np.ix_(idx_group_1, idx_de_proteins)] *= log2_fold_change
+    x[np.ix_(idx_group_1, idx_de_proteins)] += log2_fold_change
 
-    x_protein = np.mean(x, axis=0)
-    prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
-    prob = np.tile(prob, (n_cells, 1))
-    #prob = logit_linear(x, b0=-6.0, b1=0.8)
+    #x_protein = np.mean(x, axis=0)
+    #prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
+    #prob = np.tile(prob, (n_cells, 1))
+    prob = logit_linear(x, b0=-6.0, b1=0.8)
 
     mask = make_sampled_mask(prob)
 
