@@ -74,6 +74,22 @@ def scatter_sample_mean_and_variance(x, title=None, ax=None):
     ax.set_axisbelow(True)
 
 
+def scatter_protein_mean_and_cv(x, title=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    mean_protein = np.nanmean(x, axis=0)
+    mean_std = np.nanstd(x, axis=0)
+    cv_protein = mean_std / mean_protein
+
+    ax.scatter(mean_protein, cv_protein, color="blue", s=2)
+    ax.set_xlabel("Protein mean")
+    ax.set_ylabel("Protein CV")
+    ax.set_title(title)
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
 def plot_protein_detection_probability_panel(x, p_est, color="blue", title="PROTVI"):
     x_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)

@@ -268,16 +268,20 @@ def filter_by_detection_proportion_by_patient(adata, min_protein_completeness=0.
 
 
 def preprocess(adata, filter_cells=0, min_protein_completeness=0.2, verbose=True):
-    print(f"preprocess input: {adata.shape}")
+    if verbose:
+        print(f"preprocess input: {adata.shape}")
 
     sc.pp.filter_genes(adata, min_cells=1)
-    print(f"sc.pp.filter_genes: {adata.shape}")
+    if verbose:
+        print(f"sc.pp.filter_genes: {adata.shape}")
 
     sc.pp.filter_cells(adata, min_genes=filter_cells)
-    print(f"sc.pp.filter_cells: {adata.shape}")
+    if verbose:
+        print(f"sc.pp.filter_cells: {adata.shape}")
 
     filter_by_detection_proportion_by_patient(adata, min_protein_completeness=min_protein_completeness)
-    print(f"filter: {adata.shape}")
+    if verbose:
+        print(f"filter: {adata.shape}")
 
     return adata
 
@@ -349,10 +353,10 @@ def compute_overlapping_protein_correlations(x1, x2, metrics=["pearson", "spearm
     corrs = {metric: [] for metric in metrics}
 
     for idx in idx_proteins:
-        overlap_cols = overlap_mask[:, idx]
+        overlap_rows = overlap_mask[:, idx]
         
-        x1_protein = x1[overlap_cols, idx]
-        x2_protein = x2[overlap_cols, idx]
+        x1_protein = x1[overlap_rows, idx]
+        x2_protein = x2[overlap_rows, idx]
 
         if "spearman" in metrics:
             spearman = spearmanr(x1_protein, x2_protein)[0]

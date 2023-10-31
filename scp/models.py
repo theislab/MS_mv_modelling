@@ -119,7 +119,7 @@ class DecoderPROTVI(nn.Module):
         self.x_mean_decoder = nn.Linear(n_hidden, n_output)
 
         if self.x_variance == "protein-cell":
-            self.var_decoder = nn.Linear(n_hidden, n_output)
+            self.x_var_decoder = nn.Linear(n_hidden, n_output)
         elif self.x_variance == "protein":
             self.x_var = nn.Parameter(torch.randn(n_output))
 
@@ -129,7 +129,7 @@ class DecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, x: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -137,7 +137,7 @@ class DecoderPROTVI(nn.Module):
 
         Parameters
         ----------
-        x
+        z
             tensor with shape ``(n_input,)``
         cat_list
             list of category membership(s) for this sample
@@ -149,11 +149,11 @@ class DecoderPROTVI(nn.Module):
 
         """
         # intensity part
-        hx = self.x_decoder(x, *cat_list)
+        hx = self.x_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(hx)
 
         if self.x_variance == "protein-cell":
-            x_var = self.var_decoder(hx)
+            x_var = self.x_var_decoder(hx)
         elif self.x_variance == "protein":
             x_var = self.x_var
 
@@ -218,7 +218,7 @@ class PROTVAE(BaseModuleClass):
         dropout_rate: Tunable[float] = 0.1,
         log_variational: Tunable[bool] = True,
         latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
-        intensity_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell"] = "protein",
         encode_covariates: Tunable[bool] = False,
         deeply_inject_covariates: Tunable[bool] = True,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
@@ -228,7 +228,7 @@ class PROTVAE(BaseModuleClass):
         super().__init__()
         self.n_latent = n_latent
         self.log_variational = log_variational
-        self.intensity_variance = intensity_variance
+        self.x_variance = x_variance
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
 
@@ -265,7 +265,7 @@ class PROTVAE(BaseModuleClass):
             inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
-            x_variance=intensity_variance,
+            x_variance=x_variance,
         )
 
     def _get_inference_input(self, tensors):
@@ -544,7 +544,7 @@ class PROTVI(
             n_hidden=n_hidden,
             n_latent=n_latent,
             n_layers=n_layers,
-            intensity_variance=x_variance,
+            x_variance=x_variance,
             dropout_rate=dropout_rate,
             latent_distribution=latent_distribution,
             log_variational=log_variational,
