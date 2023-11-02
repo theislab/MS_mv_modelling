@@ -7,23 +7,24 @@ import pandas as pd
 # Reproducibility
 #################################################
 
-_seed_set = False
+seed_set = False
+rng = np.random.default_rng()
 
 
 def fix_seed(seed=0):
-    global _seed_set
-    _seed_set = True
-
-    np.random.seed(seed)
+    global rng, seed_set
+    seed_set = seed is not None
+    rng = np.random.default_rng(seed)
 
 
 def ensure_seed_set():
-    assert _seed_set, "Seed not set. Call fix_seed() first."
+    assert seed_set, "Seed not set. Call fix_seed() first."
 
 
 #################################################
 # Data Simulation
 #################################################
+
 
 def simulate_group(
     n_cells=1000,
@@ -36,18 +37,18 @@ def simulate_group(
     ensure_seed_set()
 
     # cell-type protein distribution
-    cell_type_signature = np.random.uniform(5, 12, n_proteins)
+    cell_type_signature = rng.uniform(5, 12, n_proteins)
 
     # cell-specific variation
-    cell_variation = np.random.normal(0, 1, n_cells)
+    cell_variation = rng.normal(0, 1, n_cells)
 
     intensity = cell_type_signature.reshape(1, -1) + cell_variation.reshape(-1, 1)
-    meassurement = np.random.normal(intensity, 0.1)
+    measurement = rng.normal(intensity, 0.1)
 
-    prob = logit_linear(meassurement, b0=-6.0, b1=0.8)
+    prob = logit_linear(measurement, b0=-6.0, b1=0.8)
     mask = make_sampled_mask(prob)
 
-    adata = create_dataset(meassurement, prob, mask)
+    adata = create_dataset(measurement, prob, mask)
 
     adata.obs["group"] = "g1"
 
@@ -76,15 +77,15 @@ def simulate_two_groups(
 
     idx_de_proteins = np.arange(n_de_proteins)
 
-    mean_protein = np.random.uniform(5, 12, n_proteins)
+    mean_protein = rng.uniform(5, 12, n_proteins)
     var_protein = 0.3 * np.ones(n_proteins)
 
-    x = np.random.normal(mean_protein, var_protein, (n_cells, n_proteins))
+    x = rng.normal(mean_protein, var_protein, (n_cells, n_proteins))
     x[np.ix_(idx_group_1, idx_de_proteins)] += log2_fold_change
 
-    #x_protein = np.mean(x, axis=0)
-    #prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
-    #prob = np.tile(prob, (n_cells, 1))
+    # x_protein = np.mean(x, axis=0)
+    # prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
+    # prob = np.tile(prob, (n_cells, 1))
     prob = logit_linear(x, b0=-6.0, b1=0.8)
 
     mask = make_sampled_mask(prob)
@@ -92,8 +93,8 @@ def simulate_two_groups(
     adata = create_dataset(x, prob, mask)
 
     adata.obs["group"] = ""
-    adata.obs.iloc[idx_group_1, 0] = "g1"
-    adata.obs.iloc[idx_group_2, 0] = "g2"
+    adata.obs["group"].iloc[idx_group_1] = "g1"
+    adata.obs["group"].iloc[idx_group_2] = "g2"
 
     return adata
 
@@ -121,7 +122,7 @@ def make_fixed_mask(prob, threshold=0.5):
 
 
 def make_sampled_mask(prob):
-    return np.random.binomial(1, prob)
+    return rng.binomial(1, prob)
 
 
 #############################################
@@ -133,7 +134,7 @@ def create_dataset(intensities, detection_probabilities, mask):
     n_cells, n_proteins = intensities.shape
 
     obs_names = [f"cell_{i}" for i in range(n_cells)]
-    obs = pd.DataFrame(index=obs_names, columns=["group"])
+    obs = pd.DataFrame(index=obs_names)
 
     var_names = [f"protein_{i}" for i in range(n_proteins)]
     var = pd.DataFrame(index=var_names)

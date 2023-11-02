@@ -53,7 +53,7 @@ def scatter_protein_detection_proportion_and_intensity(x, title=None, ax=None):
 
     ax.scatter(x_obs_protein, p_protein, color="blue", alpha=1, s=6)
     ax.set_title(title)
-    ax.set_xlabel("protein log intensity")
+    ax.set_xlabel("protein log-intensity")
     ax.set_ylabel("detection proportion")
     ax.grid(True)
     ax.set_axisbelow(True)
@@ -454,8 +454,8 @@ def plot_model_intensity_comparison(
         label=model2_name,
     )
 
-    ax.set_xlabel("Predicted missing protein log intensity")
-    ax.set_ylabel("Predicted observed protein log intensity")
+    ax.set_xlabel("Predicted missing protein log-intensity")
+    ax.set_ylabel("Predicted observed protein log-intensity")
     ax.set_title(
         "Predicted missing intensity vs. predicted observed intensity - for each protein"
     )
@@ -483,8 +483,8 @@ def plot_model_intensity_comparison(
         linestyle="--",
         alpha=0.8,
     )
-    ax.set_xlabel(f"Missing protein log intensity ({model1_name})")
-    ax.set_ylabel(f"Missing protein log intensity ({model2_name})")
+    ax.set_xlabel(f"Missing protein log-intensity ({model1_name})")
+    ax.set_ylabel(f"Missing protein log-intensity ({model2_name})")
     ax.set_title("Missing intensity - for each protein")
     ax.grid(True)
     ax.set_axisbelow(True)
@@ -509,8 +509,8 @@ def plot_model_intensity_comparison(
         linestyle="--",
         alpha=0.8,
     )
-    ax.set_xlabel(f"Predicted observed protein log intensity ({model1_name})")
-    ax.set_ylabel(f"Predicted observed protein log intensity ({model2_name})")
+    ax.set_xlabel(f"Predicted observed protein log-intensity ({model1_name})")
+    ax.set_ylabel(f"Predicted observed protein log-intensity ({model2_name})")
     ax.set_title("Observed intensity - for each protein")
     ax.grid(True)
     ax.set_axisbelow(True)
