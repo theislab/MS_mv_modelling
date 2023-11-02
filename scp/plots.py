@@ -44,7 +44,7 @@ def plot_loss(history, n_skip=0, pad=3):
 #############################################
 
 
-def scatter_protein_detection_probability_and_intensity(x, title=None, ax=None):
+def scatter_protein_detection_proportion_and_intensity(x, title=None, ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -54,7 +54,7 @@ def scatter_protein_detection_probability_and_intensity(x, title=None, ax=None):
     ax.scatter(x_obs_protein, p_protein, color="blue", alpha=1, s=6)
     ax.set_title(title)
     ax.set_xlabel("protein log intensity")
-    ax.set_ylabel("detection probability")
+    ax.set_ylabel("detection proportion")
     ax.grid(True)
     ax.set_axisbelow(True)
 
@@ -90,43 +90,18 @@ def scatter_protein_mean_and_cv(x, title=None, ax=None):
     ax.set_axisbelow(True)
 
 
-def plot_protein_detection_probability_panel(x, p_est, color="blue", title="PROTVI"):
+def plot_protein_detection_proportion_panel(x, p_est, color="blue", title="PROTVI"):
     x_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
     p_est_protein = p_est.mean(axis=0)
 
-    fig, axes = plt.subplots(figsize=(18, 5), ncols=4)
-    fig.suptitle(title, fontsize=16, y=1.05)
-    fig.tight_layout(pad=3)
+    fig, axes = plt.subplots(figsize=(20, 5), ncols=4)
+    fig.suptitle(title, fontsize=16, y=1.03)
+    fig.tight_layout(w_pad=3)
 
-    ax = axes[0]
-    ax.scatter(
-        x_protein,
-        p_protein,
-        color="black",
-        edgecolor="black",
-        linewidth=0,
-        s=6,
-        alpha=0.5,
-        label="Observed",
+    _scatter_compare_protein_detection_proportion_and_intensity(
+        x_protein, p_protein, p_est_protein, color=color, ax=axes[0]
     )
-    ax.scatter(
-        x_protein,
-        p_est_protein,
-        color="blue",
-        edgecolor="black",
-        linewidth=0,
-        s=6,
-        alpha=0.5,
-        label="Predicted",
-    )
-    ax.set_xlabel("Avg. observed log-intensity")
-    ax.set_ylabel("Detection proportion")
-    ax.set_title("Avg. protein log-intensity vs. detection proportion")
-    ax.legend()
-    ax.grid(True)
-    ax.set_axisbelow(True)
-    ax.legend(markerscale=2)
 
     _scatter_compare_protein_detection_proportion(
         p_protein, p_est_protein, color=color, ax=axes[1]
@@ -137,6 +112,37 @@ def plot_protein_detection_probability_panel(x, p_est, color="blue", title="PROT
     _scatter_compare_protein_detection_proportion_difference(
         x_protein, p_protein, p_est_protein, color=color, ax=axes[3]
     )
+
+
+def _scatter_compare_protein_detection_proportion_and_intensity(
+    x_protein, p_protein, p_est_protein, color="blue", ax=None
+):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    ax.scatter(
+        x_protein,
+        p_protein,
+        color="black",
+        s=4,
+        alpha=0.4,
+        label="Observed",
+    )
+    ax.scatter(
+        x_protein,
+        p_est_protein,
+        color=color,
+        s=4,
+        alpha=0.4,
+        label="Predicted",
+    )
+    ax.set_xlabel("Avg. observed log-intensity")
+    ax.set_ylabel("Detection proportion")
+    ax.set_title("Protein log-intensity vs. detection proportion")
+    ax.legend()
+    ax.grid(True)
+    ax.set_axisbelow(True)
+    ax.legend(markerscale=2)
 
 
 def _scatter_compare_protein_detection_proportion(
@@ -174,7 +180,7 @@ def _scatter_compare_protein_detection_proportion(
     ax.set(xlim=[0, 1], ylim=[0, 1])
     ax.set_xlabel("Observed detection proportion")
     ax.set_ylabel("Predicted detection proportion")
-    ax.set_title("Observed vs. predicted detection proportion")
+    ax.set_title("Observed vs. predicted protein detection proportion")
     ax.grid(True)
     ax.set_axisbelow(True)
 
@@ -288,8 +294,8 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
         s=40,
         alpha=1,
     )
-    ax.set_xlabel("Predicted missing protein log intensity")
-    ax.set_ylabel("Predicted observed protein log intensity")
+    ax.set_xlabel("Predicted missing protein log-intensity")
+    ax.set_ylabel("Predicted observed protein log-intensity")
     ax.set_title(
         "Predicted observed intensity vs. predicted missing intensity \n- for each protein"
     )
@@ -301,11 +307,30 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     ax.hist(diff, bins=60, color="red", edgecolor="black", linewidth=1.2)
     ax.set_ylabel("Number of proteins")
     ax.set_xlabel(
-        "Avg. present protein log-intensity - avg. missing protein log-intensity"
+        "Avg. pred. observed log-intensity - avg. pred. missing log-intensity"
     )
     ax.set_title(
-        "Difference in intensity between present and \nmissing intensities - for each protein"
+        "Difference in predicted observed intensity vs. \n predicted missing intensity - for each protein"
     )
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+
+def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+    ax.scatter(x_protein, x_est_protein, color="red", edgecolor="black", linewidth=0, s=6, alpha=0.5)
+    v_min = min(x_protein.min(), x_est_protein.min())
+    v_max = max(x_protein.max(), x_est_protein.max())
+    ax.plot([v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--")
+
+    mse = np.mean((x_protein - x_est_protein) ** 2)
+    ax.text(0.03, 0.94, f"MSE: {mse:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"), transform=ax.transAxes)
+
+    ax.set_xlabel("Observed missing protein log-intensity")
+    ax.set_ylabel("Predicted missing protein log-intensity")
+    ax.set_title("Predicted missing intensity vs. observed missing intensity \n- for each protein")
     ax.grid(True)
     ax.set_axisbelow(True)
 
@@ -497,7 +522,7 @@ def plot_model_intensity_comparison(
 
 
 # @TODO: consider creating a ProtDP wrapper class for protdp_result
-def plot_protein_detection_probability_panel_protDP(
+def plot_protein_detection_proportion_panel_protDP(
     x, protdp_result, color="blue", title="protDP"
 ):
     beta = protdp_result["beta"]
@@ -522,8 +547,8 @@ def plot_protein_detection_probability_panel_protDP(
     ax.plot(x_step, y2, color=color, linewidth=1.2, linestyle="--", label="Final")
     ax.scatter(x_protein, p_protein, color="black", linewidth=0, s=2, alpha=0.5)
     ax.set_xlabel("Avg. protein log-intensity")
-    ax.set_ylabel("Detection probability")
-    ax.set_title("Detection probability vs. avg. protein intensity")
+    ax.set_ylabel("Detection proportion")
+    ax.set_title("Detection proportion vs. avg. protein intensity")
     ax.set_ylim([-0.1, 1.1])
     ax.grid(True)
     ax.legend()

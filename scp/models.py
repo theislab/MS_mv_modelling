@@ -123,9 +123,11 @@ class DecoderPROTVI(nn.Module):
         elif self.x_variance == "protein":
             self.x_var = nn.Parameter(torch.randn(n_output))
 
+        self.m_logit = GlobalLinear(n_output)
+
         # detection probability decoder
         self.m_prob_decoder = nn.Sequential(
-            GlobalLinear(n_output),
+            self.m_logit,
             nn.Sigmoid(),
         )
 
@@ -163,6 +165,16 @@ class DecoderPROTVI(nn.Module):
         m_prob = self.m_prob_decoder(x_mean)
 
         return x_mean, x_var, m_prob
+    
+    # @TODO: cleanup
+    def get_mask_curve(self):
+        weight = self.m_logit.weight.detach().numpy()
+
+        bias = None
+        if self.m_logit.bias is not None:
+            bias = self.m_logit.bias.detach().numpy()
+
+        return weight, bias
 
 
 ## module

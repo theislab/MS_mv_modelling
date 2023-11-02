@@ -25,6 +25,35 @@ def ensure_seed_set():
 # Data Simulation
 #################################################
 
+def simulate_group(
+    n_cells=1000,
+    n_proteins=900,
+):
+    """
+    Simulate a group of cells.
+    """
+
+    ensure_seed_set()
+
+    # cell-type protein distribution
+    cell_type_signature = np.random.uniform(5, 12, n_proteins)
+
+    # cell-specific variation
+    cell_variation = np.random.normal(0, 1, n_cells)
+
+    intensity = cell_type_signature.reshape(1, -1) + cell_variation.reshape(-1, 1)
+    meassurement = np.random.normal(intensity, 0.1)
+
+    prob = logit_linear(meassurement, b0=-6.0, b1=0.8)
+    mask = make_sampled_mask(prob)
+
+    adata = create_dataset(meassurement, prob, mask)
+
+    adata.obs["group"] = "g1"
+
+    return adata
+
+
 def simulate_two_groups(
     n_group1=500,
     n_group2=500,
