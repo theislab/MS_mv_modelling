@@ -74,26 +74,45 @@ def simulate_two_groups(
     idx_group_1 = np.arange(n_group1)
     idx_group_2 = np.arange(n_group1, n_cells)
 
-    idx_de_proteins = np.arange(n_de_proteins)
+    # idx_de_proteins = np.arange(n_de_proteins)
+    idx_de_proteins = np.random.choice(range(n_proteins), n_de_proteins)
+    de_direction = np.random.choice(np.array((-1,1)), len(idx_de_proteins), p=np.array((0.5,0.5)))
 
-    mean_protein = np.random.uniform(5, 12, n_proteins)
-    var_protein = 0.3 * np.ones(n_proteins)
 
-    x = np.random.normal(mean_protein, var_protein, (n_cells, n_proteins))
-    x[np.ix_(idx_group_1, idx_de_proteins)] += log2_fold_change
+    mean_protein_g1 = np.random.uniform(5, 12, n_proteins)
+    mean_protein_g2 = mean_protein_g1.copy()
+    mean_protein_g2[idx_de_proteins] += log2_fold_change*de_direction
+    
+    var_protein = 0.6 * np.ones(n_proteins)
 
-    #x_protein = np.mean(x, axis=0)
-    #prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
+    x_g1 = np.random.normal(mean_protein_g1, var_protein, (n_group1, n_proteins))
+    x_g2 = np.random.normal(mean_protein_g2, var_protein, (n_group2, n_proteins))
+    x  = np.concatenate((x_g1,x_g2), axis = 0)
+    # x[np.ix_(idx_group_1, idx_de_proteins)] += log2_fold_change
+
+    x_protein = np.mean(x, axis=0)
+    prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
+    
+   
     #prob = np.tile(prob, (n_cells, 1))
-    prob = logit_linear(x, b0=-6.0, b1=0.8)
 
-    mask = make_sampled_mask(prob)
+    
+    # prob = logit_linear(x, b0=-6.0, b1=0.8)
+
+    # mask = make_sampled_mask(prob)
+    
+    # mask = make_mask(n_cells, prob)
+    mask = make_mask2(n_cells, prob)
+
 
     adata = create_dataset(x, prob, mask)
 
     adata.obs["group"] = ""
     adata.obs.iloc[idx_group_1, 0] = "g1"
     adata.obs.iloc[idx_group_2, 0] = "g2"
+
+    adata.var["is_de"] = 0
+    adata.var.iloc[idx_de_proteins,0] = de_direction
 
     return adata
 
@@ -124,6 +143,22 @@ def make_sampled_mask(prob):
     return np.random.binomial(1, prob)
 
 
+def make_mask(n_rep, prob):
+    resamples = [np.random.binomial(n=1, p=prob) for i in range(n_rep)]
+    mask = np.concatenate(resamples,axis=0)
+    return mask.reshape(n_rep, len(prob))
+
+def make_mask2(n_rep, prob):
+    detected_cells_per_prot = np.random.binomial(n=n_rep, p=prob)
+    mask = np.zeros((n_rep, len(prob)))
+    # detected_idx = np.arange(len(prob)*n_rep).reshape(n_rep,len(prob))
+    for i, k in enumerate(detected_cells_per_prot):
+        mask[np.random.choice(range(n_rep), k), i] = 1
+    return mask
+                    
+                    
+    
+
 #############################################
 # Other utilities
 #############################################
@@ -136,11 +171,11 @@ def create_dataset(intensities, detection_probabilities, mask):
     obs = pd.DataFrame(index=obs_names, columns=["group"])
 
     var_names = [f"protein_{i}" for i in range(n_proteins)]
-    var = pd.DataFrame(index=var_names)
+    var = pd.DataFrame(index=var_names, columns=["is_de","detection_probability"])
 
     adata = sc.AnnData(intensities, obs=obs, var=var)
     adata.layers["intensity"] = adata.X.copy()
-    adata.layers["detection_probability"] = detection_probabilities.copy()
+    adata.var["detection_probability"] = detection_probabilities.copy()
     adata.layers["detected"] = mask == 1
 
     return adata

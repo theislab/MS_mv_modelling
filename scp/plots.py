@@ -76,7 +76,7 @@ def scatter_sample_mean_and_variance(x, title=None, ax=None):
 
 def scatter_protein_mean_and_cv(x, title=None, ax=None):
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 6))
+        fig, ax = plt.subplots(figsize=(4, 4))
 
     mean_protein = np.nanmean(x, axis=0)
     mean_std = np.nanstd(x, axis=0)
