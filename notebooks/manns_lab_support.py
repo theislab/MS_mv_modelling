@@ -301,23 +301,25 @@ def correct_batch(adata):
     std = np.nanmean(stds_plates)
 
     for plate in plates:
-        plate_adata = adata[adata.obs["Plate"] == plate]
-        mean_protein_per_plate = np.nanmean(plate_adata.X, axis=0)
-        std_protein_per_plate = np.nanstd(plate_adata.X, axis=0)
+        mask = (adata.obs["Plate"] == plate).values
+        x = adata.X[mask, :]
+
+        mean_protein_per_plate = np.nanmean(x, axis=0)
+        std_protein_per_plate = np.nanstd(x, axis=0)
 
         # If only 1 cell exists in the plate, std_protein_per_plate will be 0. So we correct this.
         # @TODO: would it be better not to do this correction and thereby get more nan's in the data?
         std_protein_per_plate[std_protein_per_plate == 0] = std
 
-        plate_adata.X = (
-            ((plate_adata.X - mean_protein_per_plate) / std_protein_per_plate) * std
+        adata.X[mask, :] = (
+            ((x - mean_protein_per_plate) / std_protein_per_plate) * std
         ) + mean_protein
 
     # result stored in adata.X
 
 
 def load_data(
-    main_dir: str, pilot_dir: str, correct_batch: bool = False, verbose: bool = True
+    main_dir: str, pilot_dir: str, do_batch_correction: bool = False, verbose: bool = True
 ):
     main_adata = load_main_data(main_dir)
     main_adata = preprocess(main_adata, verbose=verbose)
@@ -325,12 +327,12 @@ def load_data(
     pilot_adata = load_pilot_data(pilot_dir)
     pilot_adata = preprocess(pilot_adata, verbose=verbose)
 
-    pilot_adata = reshape_anndata_like(adata=pilot_adata, adata_like=main_adata)
-
-    if correct_batch:
+    if do_batch_correction:
         correct_batch(main_adata)
         correct_batch(pilot_adata)
 
+    pilot_adata = reshape_anndata_like(adata=pilot_adata, adata_like=main_adata)
+    
     adata = main_adata
     adata.layers["main"] = main_adata.X.copy()
     adata.layers["pilot"] = pilot_adata.X.copy()

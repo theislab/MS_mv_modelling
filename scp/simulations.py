@@ -45,7 +45,8 @@ def simulate_group(
     intensity = cell_type_signature.reshape(1, -1) + cell_variation.reshape(-1, 1)
     measurement = rng.normal(intensity, 0.1)
 
-    prob = logit_linear(measurement, b0=-6.0, b1=0.8)
+    #prob = logit_linear(measurement, b0=-6.0, b1=0.8)
+    prob = logistic(measurement, k=2, x0=6)
     mask = make_sampled_mask(prob)
 
     adata = create_dataset(measurement, prob, mask)
@@ -110,6 +111,10 @@ def sigmoid(x):
 
 def logit_linear(x, b0, b1):
     return sigmoid(b0 + b1 * x)
+
+
+def logistic(x, k=1, x0=0, L=1):
+    return L / (1 + np.exp(-k * (x - x0)))
 
 
 #############################################
