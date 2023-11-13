@@ -1,6 +1,27 @@
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from scipy.stats import spearmanr, pearsonr
+import pickle
+import os
+
+
+def ensure_dir_exists(dir):
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+
+
+def save_dict(dict, path):
+    dir = os.path.dirname(path)
+    ensure_dir_exists(dir)
+
+    with open(path, 'wb') as f:
+        pickle.dump(dict, f)
+
+
+def load_dict(path):
+    with open(path, 'rb') as f:
+        return pickle.load(f)
 
 
 ## AnnData
@@ -96,11 +117,6 @@ def prepare_anndata_for_R(adata):
 
 
 ## numpy
-def get_coverage(x):
-    mask = ~np.isnan(x)
-    return mask.sum() / x.size
-
-
 def fill_if_nan(a, b):
     # c:= a <- b
     mask = np.isnan(a) & ~np.isnan(b)
@@ -109,6 +125,11 @@ def fill_if_nan(a, b):
     return c
 
 
+## metrics
+def get_coverage(x):
+    mask = ~np.isnan(x)
+    return mask.sum() / x.size
+
 def r_squared(x, y):
     ss_res = np.sum((y - x) ** 2)
     ss_tot = np.sum((y - np.mean(y)) ** 2)
@@ -116,15 +137,47 @@ def r_squared(x, y):
     return r2
 
 
+def compute_overlapping_protein_correlations(
+    x1, x2, metrics=["pearson", "spearman", "mse"]
+):
+    overlap_mask = ~np.isnan(x1) & ~np.isnan(x2)
+    idx_proteins = np.where(overlap_mask.sum(axis=0) >= 2)[0]
+
+    result = {metric: [] for metric in metrics}
+
+    for idx in idx_proteins:
+        overlap_rows = overlap_mask[:, idx]
+
+        x1_protein = x1[overlap_rows, idx]
+        x2_protein = x2[overlap_rows, idx]
+
+        if "spearman" in metrics:
+            spearman = spearmanr(x1_protein, x2_protein)[0]
+            result["spearman"].append(spearman)
+
+        if "pearson" in metrics:
+            pearson = pearsonr(x1_protein, x2_protein)[0]
+            result["pearson"].append(pearson)
+
+        if "mse" in metrics:
+            mse = np.mean((x1_protein - x2_protein) ** 2)
+            result["mse"].append(mse)
+
+    return result
+
+
 ## other imputation models
-
-
 def impute_downshifted_normal_sample(
-    x,
+    adata,
+    layer=None,
     scale=0.3,
     shift=1.8,
 ):
-    x = x.copy()
+    if layer is None:
+        x = adata.X.copy()
+    else:
+        x = adata.layers[layer].copy()
+
     missing_indices = np.where(np.isnan(x))
 
     mean = np.nanmean(x, axis=1)
@@ -142,11 +195,16 @@ def impute_downshifted_normal_sample(
 
 
 def impute_downshifted_normal_global(
-    x,
+    adata,
+    layer=None,
     scale=0.3,
     shift=1.8,
 ):
-    x = x.copy()
+    if layer is None:
+        x = adata.X.copy()
+    else:
+        x = adata.layers[layer].copy()
+
     missing_indices = np.where(np.isnan(x))
 
     mean = np.nanmean(x)
@@ -162,11 +220,16 @@ def impute_downshifted_normal_global(
 
 
 def impute_downshifted_normal_local(
-    x,
+    adata,
+    layer=None,
     scale=0.3,
     shift=1.8,
 ):
-    x = x.copy()
+    if layer is None:
+        x = adata.X.copy()
+    else:
+        x = adata.layers[layer].copy()
+
     missing_indices = np.where(np.isnan(x))
 
     mean = np.nanmean(x, axis=0)
@@ -183,8 +246,12 @@ def impute_downshifted_normal_local(
     return x
 
 
-def impute_sample_min(x):
-    x = x.copy()
+def impute_sample_min(adata, layer=None):
+    if layer is None:
+        x = adata.X.copy()
+    else:
+        x = adata.layers[layer].copy()
+
     missing_indices = np.where(np.isnan(x))
 
     sample_min = np.nanmin(x, axis=1)
@@ -193,14 +260,15 @@ def impute_sample_min(x):
     return x
 
 
-# @TODO: add these too
-"""
 def impute_ppca(
     adata,
+    layer=None,
     ncomp=2,
 ):
-    
     adata = adata.copy()
+
+    if layer is not None:
+        adata.X = adata.layers[layer].copy()
 
     genes_before = adata.shape[1]
     min_entry = np.nanmin(adata.X) - 1
@@ -230,33 +298,39 @@ def impute_ppca(
     return imputed_data
 
 
+
 def impute_ppca_batch(
-    self,
-    batch="cohort",
+    adata,
+    layer=None,
+    batch="Plate",
     ncomp=5,
 ):
     import statsmodels.api as sm
 
-    self.adata.X[self.missing_indices] = np.nan
-    genes_before = self.adata.shape[1]
-    min_entry = np.nanmin(self.adata.X) - 1
-    self.adata.X -= min_entry
-    protein_filter = np.array([True] * self.adata.shape[1])
-    for b in np.unique(self.adata.obs[batch]):
-        batch_data = self.adata[self.adata.obs[batch] == b]
+    adata = adata.copy()
+
+    if layer is not None:
+        adata.X = adata.layers[layer].copy()
+
+    genes_before = adata.shape[1]
+    min_entry = np.nanmin(adata.X) - 1
+    adata.X -= min_entry
+    protein_filter = np.array([True] * adata.shape[1])
+    for b in np.unique(adata.obs[batch]):
+        batch_data = adata[adata.obs[batch] == b]
         batch_filter, _ = sc.pp.filter_genes(batch_data, min_cells=ncomp, inplace=False)
         protein_filter = protein_filter & batch_filter
-    self.adata = self.adata[:, protein_filter]
-    self.adata.X += min_entry
-    self.missing_indices = np.where(np.isnan(self.adata.X))
-    genes_after = self.adata.shape[1]
+    adata = adata[:, protein_filter]
+    adata.X += min_entry
+    missing_indices = np.where(np.isnan(adata.X))
+    genes_after = adata.shape[1]
     print(
         "%d genes were filtered for the probabilistic PCA! %d genes left!"
         % (genes_before - genes_after, genes_after)
     )
 
-    for b in np.unique(self.adata.obs[batch]):
-        batch_adata = self.adata[self.adata.obs[batch] == b]
+    for b in np.unique(adata.obs[batch]):
+        batch_adata = adata[adata.obs[batch] == b]
         pc = sm.multivariate.PCA(
             data=batch_adata.X,
             ncomp=ncomp,
@@ -271,32 +345,46 @@ def impute_ppca_batch(
         assert batch_adata.is_view
         batch_adata.X = pc._adjusted_data
 
+    return adata.X
 
 def impute_knn(
-    self,
+    adata,
+    layer=None,
     n_neighbors=5,
     weights="uniform",
 ):
-    self.adata.X[self.missing_indices] = np.nan
     from sklearn.impute import KNNImputer
+
+    adata = adata.copy()
+
+    if layer is not None:
+        adata.X = adata.layers[layer].copy()
 
     imputer = KNNImputer(
         n_neighbors=n_neighbors,
         weights=weights,
         copy=False,
     )
-    imputer.fit_transform(self.adata.X)
+    imputer.fit_transform(adata.X)
+
+    return adata.X
 
 
 def impute_iterative(
-    self,
-    n_nearest_features,
+    adata,
+    layer=None,
+    n_nearest_features=5,
     initial_strategy="constant",
 ):
     # At each step, a feature column is designated as output y and the other feature columns are treated as inputs X,
     # then a regressor is fit on (X, y) for known y and missing values are predicted. This is done multiple times
     # in an iterated fashion.
-    self.adata.X[self.missing_indices] = np.nan
+
+    adata = adata.copy()
+
+    if layer is not None:
+        adata.X = adata.layers[layer].copy()
+
     from sklearn.experimental import enable_iterative_imputer
     from sklearn.impute import IterativeImputer
     from sklearn.linear_model import BayesianRidge
@@ -308,6 +396,7 @@ def impute_iterative(
         random_state=42,
         verbose=2,
     )
-    self.adata.X = imputer.fit_transform(self.adata.X)
+    adata.X = imputer.fit_transform(adata.X)
     del imputer
-"""
+
+    return adata.X

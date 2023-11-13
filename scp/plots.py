@@ -228,27 +228,22 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     x_est_miss = x_est.copy()
     x_est_miss[~np.isnan(x)] = np.nan
 
-    protein_with_missing_intensities_mask = np.isnan(x).any(axis=0)
+    x_obs_protein = np.nanmean(x, axis=0)
+    x_est_obs_protein = np.nanmean(x_est_obs, axis=0)
 
-    x_obs_protein2 = np.nanmean(x[:, protein_with_missing_intensities_mask], axis=0)
-    x_est_obs_protein2 = np.nanmean(
-        x_est_obs[:, protein_with_missing_intensities_mask], axis=0
-    )
-    x_est_miss_protein2 = np.nanmean(
-        x_est_miss[:, protein_with_missing_intensities_mask], axis=0
-    )
+    mse = np.mean((x_obs_protein - x_est_obs_protein) ** 2)
 
     ax = axes[0]
     ax.plot(
-        [0, x_obs_protein2.max()],
-        [0, x_est_obs_protein2.max()],
+        [0, x_obs_protein.max()],
+        [0, x_est_obs_protein.max()],
         color="black",
         linewidth=1.2,
         linestyle="--",
     )
     ax.scatter(
-        x_obs_protein2,
-        x_est_obs_protein2,
+        x_obs_protein,
+        x_est_obs_protein,
         color="red",
         edgecolor="black",
         linewidth=0,
@@ -256,13 +251,21 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
         alpha=0.5,
     )
     ax.scatter(
-        np.mean(x_obs_protein2),
-        np.mean(x_est_obs_protein2),
+        np.mean(x_obs_protein),
+        np.mean(x_est_obs_protein),
         color="cyan",
         edgecolor="black",
         linewidth=1,
         s=40,
         alpha=1,
+    )
+    ax.text(
+        0.03,
+        0.94,
+        f"MSE: {mse:.3f}",
+        fontsize=10,
+        bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
+        transform=ax.transAxes,
     )
     ax.set_xlabel("Observed protein log-intensity")
     ax.set_ylabel("Predicted protein log-intensity")
@@ -270,15 +273,25 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     ax.grid(True)
     ax.set_axisbelow(True)
 
+    #############################################
+
+    protein_with_missing_intensities_mask = np.isnan(x).any(axis=0)
+    x_est_obs_protein_shared = np.nanmean(
+        x_est_obs[:, protein_with_missing_intensities_mask], axis=0
+    )
+    x_est_miss_protein_shared = np.nanmean(
+        x_est_miss[:, protein_with_missing_intensities_mask], axis=0
+    )
+
     ax = axes[1]
-    min_v = min(x_est_obs_protein2.min(), x_est_miss_protein2.min())
-    max_v = max(x_est_obs_protein2.max(), x_est_miss_protein2.max())
+    min_v = min(x_est_obs_protein_shared.min(), x_est_miss_protein_shared.min())
+    max_v = max(x_est_obs_protein_shared.max(), x_est_miss_protein_shared.max())
     ax.plot(
         [min_v, max_v], [min_v, max_v], color="black", linewidth=1.2, linestyle="--"
     )
     ax.scatter(
-        x_est_miss_protein2,
-        x_est_obs_protein2,
+        x_est_miss_protein_shared,
+        x_est_obs_protein_shared,
         color="red",
         edgecolor="black",
         linewidth=0,
@@ -286,8 +299,8 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
         alpha=0.5,
     )
     ax.scatter(
-        np.mean(x_est_miss_protein2),
-        np.mean(x_est_obs_protein2),
+        np.mean(x_est_miss_protein_shared),
+        np.mean(x_est_obs_protein_shared),
         color="cyan",
         edgecolor="black",
         linewidth=1,
@@ -303,7 +316,7 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     ax.set_axisbelow(True)
 
     ax = axes[2]
-    diff = x_est_obs_protein2 - x_est_miss_protein2
+    diff = x_est_obs_protein_shared - x_est_miss_protein_shared
     ax.hist(diff, bins=60, color="red", edgecolor="black", linewidth=1.2)
     ax.set_ylabel("Number of proteins")
     ax.set_xlabel(
@@ -320,17 +333,36 @@ def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, ax=None)
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
 
-    ax.scatter(x_protein, x_est_protein, color="red", edgecolor="black", linewidth=0, s=6, alpha=0.5)
+    ax.scatter(
+        x_protein,
+        x_est_protein,
+        color="red",
+        edgecolor="black",
+        linewidth=0,
+        s=6,
+        alpha=0.5,
+    )
     v_min = min(x_protein.min(), x_est_protein.min())
     v_max = max(x_protein.max(), x_est_protein.max())
-    ax.plot([v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--")
+    ax.plot(
+        [v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--"
+    )
 
     mse = np.mean((x_protein - x_est_protein) ** 2)
-    ax.text(0.03, 0.94, f"MSE: {mse:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"), transform=ax.transAxes)
+    ax.text(
+        0.03,
+        0.94,
+        f"MSE: {mse:.3f}",
+        fontsize=10,
+        bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
+        transform=ax.transAxes,
+    )
 
     ax.set_xlabel("Observed missing protein log-intensity")
     ax.set_ylabel("Predicted missing protein log-intensity")
-    ax.set_title("Predicted missing intensity vs. observed missing intensity \n- for each protein")
+    ax.set_title(
+        "Predicted missing intensity vs. observed missing intensity \n- for each protein"
+    )
     ax.grid(True)
     ax.set_axisbelow(True)
 

@@ -46,7 +46,7 @@ def simulate_group(
     measurement = rng.normal(intensity, 0.1)
 
     #prob = logit_linear(measurement, b0=-6.0, b1=0.8)
-    prob = logistic(measurement, k=2, x0=6)
+    prob = logistic(measurement, k=2, x0=7)
     mask = make_sampled_mask(prob)
 
     adata = create_dataset(measurement, prob, mask)
