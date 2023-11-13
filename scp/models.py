@@ -118,15 +118,20 @@ class DecoderPROTVI(nn.Module):
 
         self.x_mean_decoder = nn.Linear(n_hidden, n_output)
 
+        self.x_meanobs_decoder = nn.Linear(n_hidden, n_output)
+        # self.x_meanmiss_decoder = nn.Linear(n_hidden, n_output)
+
         if self.x_variance == "protein-cell":
             self.x_var_decoder = nn.Linear(n_hidden, n_output)
         elif self.x_variance == "protein":
             self.x_var = nn.Parameter(torch.randn(n_output))
 
+        
         self.m_logit = GlobalLinear(n_output)
 
         # detection probability decoder
         self.m_prob_decoder = nn.Sequential(
+            #nn.Linear(n_hidden, n_output), # uncomment if want to get p from latent
             self.m_logit,
             nn.Sigmoid(),
         )
@@ -152,7 +157,9 @@ class DecoderPROTVI(nn.Module):
         """
         # intensity part
         hx = self.x_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(hx)
+        # x_mean = self.x_mean_decoder(hx)
+
+        
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(hx)
@@ -161,10 +168,17 @@ class DecoderPROTVI(nn.Module):
 
         x_var = torch.exp(x_var)
 
+        x_muobs = self.x_meanobs_decoder(hx)
+        x_mumiss = x_muobs - self.m_logit.weight*x_var
+        x_mean = 0.5*(x_muobs + x_mumiss)
+        
+
         # detection probability part
         m_prob = self.m_prob_decoder(x_mean)
+        
+        # m_prob = self.m_prob_decoder(hx)
 
-        return x_mean, x_var, m_prob
+        return x_mean, x_var, m_prob, x_mumiss, x_muobs
     
     # @TODO: cleanup
     def get_mask_curve(self):
@@ -373,13 +387,15 @@ class PROTVAE(BaseModuleClass):
         else:
             categorical_input = ()
 
-        x_mean, x_var, m_prob = self.decoder(
+        x_mean, x_var, m_prob, x_mumiss, x_muobs = self.decoder(
             decoder_input, batch_index, *categorical_input
         )
         return {
             "x_mean": x_mean,
             "x_var": x_var,
             "m_prob": m_prob,
+            "x_mumiss": x_mumiss,
+            "x_muobs": x_muobs,
         }
 
     def loss(
@@ -396,6 +412,8 @@ class PROTVAE(BaseModuleClass):
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
+        x_mean_miss = generative_outputs["x_mumiss"]
+        x_mean_obs = generative_outputs["x_muobs"]
 
         qz = inference_outputs["qz"]
         pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
@@ -403,7 +421,7 @@ class PROTVAE(BaseModuleClass):
         kl_divergence = kl(qz, pz).sum(dim=-1)
         weighted_kl = kl_weight * kl_divergence
         reconst_loss = self._get_reconstruction_loss(
-            x, x_mean, x_var, m_prob, mechanism_weight=mechanism_weight
+            x, x_mean, x_var, m_prob, x_mean_miss, x_mean_obs, mechanism_weight=mechanism_weight
         )
 
         loss = torch.mean(reconst_loss + weighted_kl)
@@ -415,17 +433,18 @@ class PROTVAE(BaseModuleClass):
     def sample(self):
         raise NotImplementedError
 
-    def _get_reconstruction_loss(self, x, x_mean, x_var, m_prob, mechanism_weight=1.0):
+    def _get_reconstruction_loss(self, x, x_mean, x_var, m_prob, x_mumiss, x_mean_obs, mechanism_weight=1.0):
         m_obs = x != 0
         m_miss = ~m_obs
 
         x_std = torch.sqrt(x_var)
-        ll_x = Normal(x_mean, x_std).log_prob(x)
+        ll_x = Normal(0.5*(x_mumiss+x_mean_obs), x_std).log_prob(x)
+        ll_x_miss = Normal(x_mumiss, x_std).log_prob(x)
         ll_m = mechanism_weight * Bernoulli(m_prob).log_prob(m_obs.type(torch.float32))
 
         ll = torch.empty_like(x)
         ll[m_obs] = ll_x[m_obs] + ll_m[m_obs]
-        ll[m_miss] = ll_m[m_miss]
+        ll[m_miss] = ll_x_miss[m_miss] + ll_m[m_miss] 
 
         nll = -torch.sum(ll, dim=-1)
 
@@ -479,18 +498,43 @@ class ProteinMixin:
 
         intensity_list = []
         detection_probability_list = []
+        std_list = []
+
+        sensored_intensity_list = []
+        
         for tensors in scdl:
             _, generative_outputs = self.module.forward(
                 tensors=tensors, compute_loss=False
             )
 
-            x_mean = generative_outputs["x_mean"].cpu().numpy()
+            
             m_prob = generative_outputs["m_prob"].cpu().numpy()
+            # x_mean = generative_outputs["x_mean"].cpu().numpy()
+            x_mean = generative_outputs["x_muobs"].cpu().numpy()
+
+            x_std = torch.sqrt(generative_outputs["x_var"]).cpu().numpy()
+            x_mean_miss = generative_outputs["x_mumiss"].cpu().numpy()
+
+            x_mean += x_mean_miss
+            x_mean = 0.5*x_mean
 
             intensity_list.append(x_mean)
             detection_probability_list.append(m_prob)
+            std_list.append(x_std)
+            sensored_intensity_list.append(x_mean_miss)
 
-        intensities = np.concatenate(intensity_list, axis=0)
+        mu_intensities = np.concatenate(intensity_list, axis=0)
+        std_intensities = np.concatenate(std_list, axis=0) 
+        mu_miss_intensities = np.concatenate(sensored_intensity_list, axis = 0)
+
+        m_miss = adata.X == 0
+        mu_intensities[m_miss] = mu_miss_intensities[m_miss]
+        # mu_intensities = mu_miss_intensities # negative control
+        px = Normal(torch.from_numpy(mu_intensities), torch.from_numpy(std_intensities))
+        intensities = px.sample((1,)).squeeze(0).cpu().numpy()
+
+       
+        
         detection_probabilities = np.concatenate(detection_probability_list, axis=0)
 
         return intensities, detection_probabilities
