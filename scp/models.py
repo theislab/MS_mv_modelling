@@ -170,7 +170,13 @@ class ConjunctionDecoderPROTVI(nn.Module):
         return x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        return None, None
+        weight = self.m_logit.weight.detach().cpu().numpy()
+
+        bias = None
+        if self.m_logit.bias is not None:
+            bias = self.m_logit.bias.detach().cpu().numpy()
+
+        return weight, bias
 
 
 class SelectionDecoderPROTVI(nn.Module):
@@ -260,7 +266,7 @@ class SelectionDecoderPROTVI(nn.Module):
     def get_mask_logit_weights(self):
         weight = self.m_logit.weight.detach().cpu().numpy()
 
-        bias = 0
+        bias = None
         if self.m_logit.bias is not None:
             bias = self.m_logit.bias.detach().cpu().numpy()
 

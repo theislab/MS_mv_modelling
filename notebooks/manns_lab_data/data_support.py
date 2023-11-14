@@ -3,14 +3,17 @@ import numpy as np
 import scanpy as sc
 import os
 from scipy.stats import spearmanr, pearsonr
+import matplotlib.pyplot as plt
 
 import scp.utils as utils
+import scp.plots as pl
 
 """
     Functions to load and preprocess the dataset from Mann's lab.
 """
 
 
+# data loading
 def load_main_data(dir: str):
     annotations_path = os.path.join(dir, "annotations_main_lt_v21_Sc11_AIMsplit3.tsv")
     data_path = os.path.join(
@@ -320,10 +323,28 @@ def correct_batch(adata):
     # result stored in adata.X
 
 
+def integrate_dataset(x_pilot, x_main):
+    """ regress difference between pilot and main out using overlapping intensities """
+    overlap_mask = ~np.isnan(x_pilot) & ~np.isnan(x_main)
+    row_idx, col_idx = np.where(overlap_mask)
+
+    # fit linear curve
+    x_pilot_fit = x_pilot[row_idx, col_idx]
+    x_main_fit = x_main[row_idx, col_idx]
+
+    import scipy.stats as stats
+
+    slope, intercept, _, _, _ = stats.linregress(x_pilot_fit, x_main_fit)
+    x_pilot_l = slope * x_pilot.copy() + intercept
+
+    return x_pilot_l, x_main.copy()
+
+
 def load_data(
     main_dir: str,
     pilot_dir: str,
     do_batch_correction: bool = False,
+    integrate: bool = False,
     verbose: bool = True,
 ):
     main_adata = load_main_data(main_dir)
@@ -337,6 +358,9 @@ def load_data(
         correct_batch(pilot_adata)
 
     pilot_adata = utils.reshape_anndata_like(adata=pilot_adata, adata_like=main_adata)
+
+    if integrate:
+        pilot_adata.X, main_adata.X = integrate_dataset(pilot_adata.X, main_adata.X)
 
     adata = main_adata
     adata.layers["main"] = main_adata.X.copy()
@@ -358,7 +382,7 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     m_main = ~np.isnan(x_main)
 
     ## entry-wise
-    
+
     # mse
     main_model_mse = np.mean((x_main[m_main] - x_est[m_main]) ** 2)
     pilot_model_mse = np.mean((x_pilot[m_pilot] - x_est[m_pilot]) ** 2)
@@ -375,16 +399,17 @@ def compute_common_metrics(x_main, x_pilot, x_est):
 
     x_est_main_obs_protein = np.nanmean(x_est_main_obs, axis=0)
     x_est_pilot_obs_protein = np.nanmean(x_est_pilot_obs, axis=0)
-    
+
     # mse
     main_model_protein_mse = np.nanmean((x_main_protein - x_est_main_obs_protein) ** 2)
-    pilot_model_protein_mse = np.nanmean((x_pilot_protein - x_est_pilot_obs_protein) ** 2)
+    pilot_model_protein_mse = np.nanmean(
+        (x_pilot_protein - x_est_pilot_obs_protein) ** 2
+    )
 
     result = {
         # entry-wise
         "main_model_mse": main_model_mse,
         "pilot_model_mse": pilot_model_mse,
-
         # protein-wise
         "main_model_protein_mse": main_model_protein_mse,
         "pilot_model_protein_mse": pilot_model_protein_mse,
@@ -396,6 +421,7 @@ def compute_common_metrics(x_main, x_pilot, x_est):
 RESULT_DIR = "../../results/manns_lab_data/"
 
 
+# saving and loading
 def save_dict_to_results(dict, filename, results_dir=RESULT_DIR):
     path = os.path.join(results_dir, filename)
     utils.save_dict(dict, path)
@@ -404,3 +430,61 @@ def save_dict_to_results(dict, filename, results_dir=RESULT_DIR):
 def load_dict_from_results(filename, results_dir=RESULT_DIR):
     path = os.path.join(results_dir, filename)
     return utils.load_dict(path)
+
+
+# plotting
+def scatter_pilot_main_model_comparison(
+    x_main, x_pilot, x_est, model_name="PROTVI", metrics=["pearson", "spearman", "mse"]
+):
+    main_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(
+        x_main, x_pilot
+    )
+    model_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(
+        x_est, x_pilot
+    )
+
+    n_metrics = len(metrics)
+    fig, axes = plt.subplots(ncols=n_metrics, figsize=(n_metrics * 6, 6))
+
+    for i, metric in enumerate(metrics):
+        ax = axes[i]
+
+        ax.scatter(
+            main_pilot_protein_comparison[metric],
+            model_pilot_protein_comparison[metric],
+            color="blue",
+            edgecolor="black",
+            linewidth=0,
+            s=6,
+            alpha=0.5,
+        )
+        ax.set_xlabel("MAIN - PILOT")
+        ax.set_ylabel(f"{model_name} - PILOT")
+        lims = [
+            np.min([ax.get_xlim(), ax.get_ylim()]),
+            np.max([ax.get_xlim(), ax.get_ylim()]),
+        ]
+        ax.plot(lims, lims, "k-", alpha=0.75, zorder=0)
+        ax.grid(True)
+        ax.set_axisbelow(True)
+        ax.set_title(f"{metric} per protein")
+
+
+def scatter_compare_protein_pilot_model_intensity(x_main, x_pilot, x_est):
+    miss_mask = np.logical_and(np.isnan(x_main), ~np.isnan(x_pilot))
+    protein_mask = miss_mask.any(axis=0)
+
+    x_est_miss = x_est.copy()
+    x_est_miss[~np.isnan(x_main)] = np.nan
+
+    x_est_miss2 = x_est_miss.copy()
+    x_est_miss2[~miss_mask] = np.nan
+    x_est_miss2 = x_est_miss2[:, protein_mask]
+
+    x_pilot2 = x_pilot.copy()
+    x_pilot2[~miss_mask] = np.nan
+    x_pilot2 = x_pilot2[:, protein_mask]
+
+    x_est_protein2 = np.nanmean(x_est_miss2, axis=0)
+    x_pilot_protein2 = np.nanmean(x_pilot2, axis=0)
+    pl.scatter_compare_protein_missing_intensity(x_pilot_protein2, x_est_protein2)
