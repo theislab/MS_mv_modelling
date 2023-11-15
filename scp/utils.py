@@ -138,14 +138,23 @@ def r_squared(x, y):
 
 
 def compute_overlapping_protein_correlations(
-    x1, x2, metrics=["pearson", "spearman", "mse"]
+    x1, x2, metrics=["pearson", "spearman", "mse"], idx_proteins=None, n_min_overlap=2
 ):
+    assert n_min_overlap >= 2
+
+    if idx_proteins is None:
+        idx_proteins = np.arange(x1.shape[1])
+
     overlap_mask = ~np.isnan(x1) & ~np.isnan(x2)
-    idx_proteins = np.where(overlap_mask.sum(axis=0) >= 2)[0]
+    n_proteins = overlap_mask.sum(axis=0)
 
     result = {metric: [] for metric in metrics}
 
     for idx in idx_proteins:
+
+        if n_proteins[idx] < n_min_overlap:
+            continue
+
         overlap_rows = overlap_mask[:, idx]
 
         x1_protein = x1[overlap_rows, idx]

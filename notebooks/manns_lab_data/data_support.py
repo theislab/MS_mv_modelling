@@ -378,41 +378,100 @@ def load_data(
 
 
 def compute_common_metrics(x_main, x_pilot, x_est):
+    # also remove the entries in pilot which has an entry in main
+    x_pilot = x_pilot.copy()
+    x_pilot[~np.isnan(x_main)] = np.nan
+
     m_pilot = ~np.isnan(x_pilot)
     m_main = ~np.isnan(x_main)
 
-    ## entry-wise
+    ## entry-wise ##
 
     # mse
     main_model_mse = np.mean((x_main[m_main] - x_est[m_main]) ** 2)
     pilot_model_mse = np.mean((x_pilot[m_pilot] - x_est[m_pilot]) ** 2)
 
-    ## protein-wise
+    # pearson
+    main_model_pearson = pearsonr(x_main[m_main], x_est[m_main])[0]
+    pilot_model_pearson = pearsonr(x_pilot[m_pilot], x_est[m_pilot])[0]
+
+    ## protein-wise ##
     x_est_main_obs = x_est.copy()
     x_est_main_obs[~m_main] = np.nan
 
     x_est_pilot_obs = x_est.copy()
     x_est_pilot_obs[~m_pilot] = np.nan
 
-    x_main_protein = np.nanmean(x_main, axis=0)
-    x_pilot_protein = np.nanmean(x_pilot, axis=0)
+    # keep proteins with at least 1 intensity measurement
+    idx_proteins_main = get_protein_idx(x_main, min_protein_replicas=1)
+    idx_proteins_pilot = get_protein_idx(x_pilot, min_protein_replicas=1)
 
-    x_est_main_obs_protein = np.nanmean(x_est_main_obs, axis=0)
-    x_est_pilot_obs_protein = np.nanmean(x_est_pilot_obs, axis=0)
+    x_main_protein = np.nanmean(x_main[:, idx_proteins_main], axis=0)
+    x_pilot_protein = np.nanmean(x_pilot[:, idx_proteins_pilot], axis=0)
+
+    x_est_main_obs_protein = np.nanmean(x_est_main_obs[:, idx_proteins_main], axis=0)
+    x_est_pilot_obs_protein = np.nanmean(x_est_pilot_obs[:, idx_proteins_pilot], axis=0)
 
     # mse
-    main_model_protein_mse = np.nanmean((x_main_protein - x_est_main_obs_protein) ** 2)
-    pilot_model_protein_mse = np.nanmean(
+    main_model_protein_mse = np.mean((x_main_protein - x_est_main_obs_protein) ** 2)
+    pilot_model_protein_mse = np.mean(
         (x_pilot_protein - x_est_pilot_obs_protein) ** 2
     )
+
+    # pearson
+    main_model_protein_pearson = pearsonr(x_main_protein, x_est_main_obs_protein)[0]
+    pilot_model_protein_pearson = pearsonr(x_pilot_protein, x_est_pilot_obs_protein)[0]
 
     result = {
         # entry-wise
         "main_model_mse": main_model_mse,
         "pilot_model_mse": pilot_model_mse,
+
+        "main_model_pearson": main_model_pearson,
+        "pilot_model_pearson": pilot_model_pearson,
+
         # protein-wise
         "main_model_protein_mse": main_model_protein_mse,
         "pilot_model_protein_mse": pilot_model_protein_mse,
+
+        "main_model_protein_pearson": main_model_protein_pearson,
+        "pilot_model_protein_pearson": pilot_model_protein_pearson,
+    }
+
+    return result
+
+
+def compute_common_metrics_protDP(x_main, x_pilot, x_est_obs, x_est_miss):
+    # also remove the entries in pilot which has an entry in main
+    x_pilot = x_pilot.copy()
+    x_pilot[~np.isnan(x_main)] = np.nan
+
+    # keep proteins with at least 1 intensity measurement
+    idx_proteins_main = get_protein_idx(x_main, min_protein_replicas=1)
+    idx_proteins_pilot = get_protein_idx(x_pilot, min_protein_replicas=1)
+
+    x_main_protein = np.nanmean(x_main[:, idx_proteins_main], axis=0)
+    x_pilot_protein = np.nanmean(x_pilot[:, idx_proteins_pilot], axis=0)
+
+    x_est_main_protDP = x_est_obs[idx_proteins_main]
+    x_est_pilot_protDP = x_est_miss[idx_proteins_pilot]
+
+    # mse
+    main_model_protein_mse = np.nanmean((x_main_protein - x_est_main_protDP) ** 2)
+    pilot_model_protein_mse = np.nanmean(
+        (x_pilot_protein - x_est_pilot_protDP) ** 2
+    )
+
+    # pearson
+    main_model_protein_pearson = pearsonr(x_main_protein, x_est_main_protDP)[0]
+    pilot_model_protein_pearson = pearsonr(x_pilot_protein, x_est_pilot_protDP)[0]
+
+    result = {
+        "main_model_protein_mse": main_model_protein_mse,
+        "pilot_model_protein_mse": pilot_model_protein_mse,
+
+        "main_model_protein_pearson": main_model_protein_pearson,
+        "pilot_model_protein_pearson": pilot_model_protein_pearson,
     }
 
     return result
@@ -433,31 +492,34 @@ def load_dict_from_results(filename, results_dir=RESULT_DIR):
 
 
 # plotting
-def scatter_pilot_main_model_comparison(
-    x_main, x_pilot, x_est, model_name="PROTVI", metrics=["pearson", "spearman", "mse"]
-):
-    main_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(
-        x_main, x_pilot
-    )
-    model_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(
-        x_est, x_pilot
-    )
+def get_protein_overlap_idx(x1, x2, n_min_protein_overlap):
+    overlap_mask = ~np.isnan(x1) & ~np.isnan(x2)
+    n_proteins = overlap_mask.sum(axis=0)
+    idx_proteins = np.where(n_proteins >= n_min_protein_overlap)[0]
+    return idx_proteins
+
+
+def get_protein_idx(x, min_protein_replicas):
+    n_proteins = (~np.isnan(x)).sum(axis=0)
+    idx_proteins = np.where(n_proteins >= min_protein_replicas)[0]
+    return idx_proteins
+
+
+def scatter_main_pilot_model(x_main, x_pilot, x_est, model_name="PROTVI", metrics=["pearson", "spearman", "mse"], n_min_protein_overlap=2):
+    idx_proteins_main_pilot = get_protein_overlap_idx(x_main, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
+    idx_proteins_model_pilot = get_protein_overlap_idx(x_est, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
+    idx_proteins = np.intersect1d(idx_proteins_main_pilot, idx_proteins_model_pilot)
+
+    main_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(x_main, x_pilot, idx_proteins=idx_proteins)
+    model_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(x_est, x_pilot, idx_proteins=idx_proteins)
 
     n_metrics = len(metrics)
     fig, axes = plt.subplots(ncols=n_metrics, figsize=(n_metrics * 6, 6))
 
     for i, metric in enumerate(metrics):
         ax = axes[i]
-
-        ax.scatter(
-            main_pilot_protein_comparison[metric],
-            model_pilot_protein_comparison[metric],
-            color="blue",
-            edgecolor="black",
-            linewidth=0,
-            s=6,
-            alpha=0.5,
-        )
+        
+        ax.scatter(main_pilot_protein_comparison[metric], model_pilot_protein_comparison[metric], color="blue", edgecolor="black", linewidth=0, s=6, alpha=0.5)
         ax.set_xlabel("MAIN - PILOT")
         ax.set_ylabel(f"{model_name} - PILOT")
         lims = [
@@ -470,21 +532,19 @@ def scatter_pilot_main_model_comparison(
         ax.set_title(f"{metric} per protein")
 
 
-def scatter_compare_protein_pilot_model_intensity(x_main, x_pilot, x_est):
+def scatter_pilot_model_protein(x_main, x_pilot, x_est):
     miss_mask = np.logical_and(np.isnan(x_main), ~np.isnan(x_pilot))
     protein_mask = miss_mask.any(axis=0)
 
-    x_est_miss = x_est.copy()
-    x_est_miss[~np.isnan(x_main)] = np.nan
+    x_est_miss_sub = x_est.copy()
+    x_est_miss_sub[~miss_mask] = np.nan
+    x_est_miss_sub = x_est_miss_sub[:, protein_mask]
 
-    x_est_miss2 = x_est_miss.copy()
-    x_est_miss2[~miss_mask] = np.nan
-    x_est_miss2 = x_est_miss2[:, protein_mask]
+    x_pilot_sub = x_pilot.copy()
+    x_pilot_sub[~miss_mask] = np.nan
+    x_pilot_sub = x_pilot_sub[:, protein_mask]
 
-    x_pilot2 = x_pilot.copy()
-    x_pilot2[~miss_mask] = np.nan
-    x_pilot2 = x_pilot2[:, protein_mask]
-
-    x_est_protein2 = np.nanmean(x_est_miss2, axis=0)
-    x_pilot_protein2 = np.nanmean(x_pilot2, axis=0)
-    pl.scatter_compare_protein_missing_intensity(x_pilot_protein2, x_est_protein2)
+    x_est_protein = np.nanmean(x_est_miss_sub, axis=0)
+    x_pilot_protein = np.nanmean(x_pilot_sub, axis=0)
+    
+    pl.scatter_compare_protein_missing_intensity(x_pilot_protein, x_est_protein)

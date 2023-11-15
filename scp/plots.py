@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import pearsonr
 
 """
     Common plots used in multiple notebooks
@@ -329,14 +330,14 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     ax.set_axisbelow(True)
 
 
-def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, ax=None):
+def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, color="red", ax=None):
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
 
     ax.scatter(
         x_protein,
         x_est_protein,
-        color="red",
+        color=color,
         edgecolor="black",
         linewidth=0,
         s=6,
@@ -347,12 +348,22 @@ def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, ax=None)
     ax.plot(
         [v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--"
     )
-
+    
     mse = np.mean((x_protein - x_est_protein) ** 2)
     ax.text(
         0.03,
         0.94,
         f"MSE: {mse:.3f}",
+        fontsize=10,
+        bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
+        transform=ax.transAxes,
+    )
+
+    pearson = pearsonr(x_protein, x_est_protein)
+    ax.text(
+        0.03,
+        0.83,
+        f"Pearson corr.\n{pearson[0]:.3f}",
         fontsize=10,
         bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
         transform=ax.transAxes,
