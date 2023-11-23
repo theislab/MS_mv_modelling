@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import pearsonr
+
+import scp.metrics as metrics
 
 """
     Common plots used in multiple notebooks
@@ -152,13 +153,7 @@ def _scatter_compare_protein_detection_proportion(
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
 
-    # r2 = scp.utils.r_squared(p_protein, p_est_protein)
-    # ax.text(0.03, 0.94, f"MSE: {mse:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"))
-
-    # pearson = pearsonr(obs_detection_proportion, pred_detection_proportion)
-    # ax.text(0.03, 0.90, f"Pearson corr.\n{pearson[0]:.3f}", fontsize=10, bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"))
-
-    mse = np.mean((p_protein - p_est_protein) ** 2)
+    mse = metrics.mse(p_protein, p_est_protein)
     ax.text(
         0.03,
         0.94,
@@ -232,7 +227,7 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     x_obs_protein = np.nanmean(x, axis=0)
     x_est_obs_protein = np.nanmean(x_est_obs, axis=0)
 
-    mse = np.mean((x_obs_protein - x_est_obs_protein) ** 2)
+    mse = metrics.mse(x_obs_protein, x_est_obs_protein)
 
     ax = axes[0]
     ax.plot(
@@ -349,7 +344,7 @@ def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, color="r
         [v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--"
     )
     
-    mse = np.mean((x_protein - x_est_protein) ** 2)
+    mse = metrics.mse(x_protein, x_est_protein)
     ax.text(
         0.03,
         0.94,
@@ -359,11 +354,11 @@ def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, color="r
         transform=ax.transAxes,
     )
 
-    pearson = pearsonr(x_protein, x_est_protein)
+    pearson = metrics.pearson(x_protein, x_est_protein)
     ax.text(
         0.03,
         0.83,
-        f"Pearson corr.\n{pearson[0]:.3f}",
+        f"Pearson corr.\n{pearson:.3f}",
         fontsize=10,
         bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
         transform=ax.transAxes,

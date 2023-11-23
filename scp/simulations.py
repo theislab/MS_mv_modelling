@@ -2,7 +2,6 @@ import numpy as np
 import scanpy as sc
 import pandas as pd
 
-
 #################################################
 # Reproducibility
 #################################################
@@ -27,8 +26,8 @@ def ensure_seed_set():
 
 
 def simulate_group(
-    n_cells=1000,
-    n_proteins=900,
+    n_cells=2000,
+    n_proteins=1000,
 ):
     """
     Simulate a group of cells.
@@ -45,9 +44,10 @@ def simulate_group(
     intensity = cell_type_signature.reshape(1, -1) + cell_variation.reshape(-1, 1)
     measurement = rng.normal(intensity, 0.1)
 
-    #prob = logit_linear(measurement, b0=-6.0, b1=0.8)
-    prob = logistic(measurement, k=2, x0=7)
-    mask = make_sampled_mask(prob)
+    # prob = logit_linear(measurement, b0=-6.0, b1=0.8)
+    # prob = logistic(measurement, k=2, x0=7)
+    prob = sigmoid(2 * measurement - 14)
+    mask = create_sampled_mask(prob)
 
     adata = create_dataset(measurement, prob, mask)
 
@@ -89,7 +89,7 @@ def simulate_two_groups(
     # prob = np.tile(prob, (n_cells, 1))
     prob = logit_linear(x, b0=-6.0, b1=0.8)
 
-    mask = make_sampled_mask(prob)
+    mask = create_sampled_mask(prob)
 
     adata = create_dataset(x, prob, mask)
 
@@ -122,11 +122,11 @@ def logistic(x, k=1, x0=0, L=1):
 #############################################
 
 
-def make_fixed_mask(prob, threshold=0.5):
+def create_fixed_mask(prob, threshold=0.5):
     return np.ones_like(prob) * (prob > threshold)
 
 
-def make_sampled_mask(prob):
+def create_sampled_mask(prob):
     return rng.binomial(1, prob)
 
 

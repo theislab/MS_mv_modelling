@@ -2,14 +2,14 @@ import pandas as pd
 import numpy as np
 import scanpy as sc
 import os
-from scipy.stats import spearmanr, pearsonr
 import matplotlib.pyplot as plt
 
 import scp.utils as utils
 import scp.plots as pl
+import scp.metrics as metrics
 
 """
-    Functions to load and preprocess the dataset from Mann's lab.
+    Functionality specific for the Mann's lab data.
 """
 
 
@@ -324,7 +324,7 @@ def correct_batch(adata):
 
 
 def integrate_dataset(x_pilot, x_main):
-    """ regress difference between pilot and main out using overlapping intensities """
+    """regress difference between pilot and main out using overlapping intensities"""
     overlap_mask = ~np.isnan(x_pilot) & ~np.isnan(x_main)
     row_idx, col_idx = np.where(overlap_mask)
 
@@ -370,9 +370,9 @@ def load_data(
         x_combined = utils.fill_if_nan(main_adata.X, pilot_adata.X)
 
         print()
-        print(f"main intensity coverage:     {utils.get_coverage(main_adata.X):.2%}")
-        print(f"pilot intensity coverage:    {utils.get_coverage(pilot_adata.X):.2%}")
-        print(f"combined intensity coverage: {utils.get_coverage(x_combined):.2%}")
+        print(f"main intensity coverage:     {metrics.get_coverage(main_adata.X):.2%}")
+        print(f"pilot intensity coverage:    {metrics.get_coverage(pilot_adata.X):.2%}")
+        print(f"combined intensity coverage: {metrics.get_coverage(x_combined):.2%}")
 
     return adata
 
@@ -388,12 +388,12 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     ## entry-wise ##
 
     # mse
-    main_model_mse = np.mean((x_main[m_main] - x_est[m_main]) ** 2)
-    pilot_model_mse = np.mean((x_pilot[m_pilot] - x_est[m_pilot]) ** 2)
+    main_model_mse = metrics.mse(x_main[m_main], x_est[m_main])
+    pilot_model_mse = metrics.mse(x_pilot[m_pilot], x_est[m_pilot])
 
     # pearson
-    main_model_pearson = pearsonr(x_main[m_main], x_est[m_main])[0]
-    pilot_model_pearson = pearsonr(x_pilot[m_pilot], x_est[m_pilot])[0]
+    main_model_pearson = metrics.pearson(x_main[m_main], x_est[m_main])
+    pilot_model_pearson = metrics.pearson(x_pilot[m_pilot], x_est[m_pilot])
 
     ## protein-wise ##
     x_est_main_obs = x_est.copy()
@@ -413,27 +413,22 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     x_est_pilot_obs_protein = np.nanmean(x_est_pilot_obs[:, idx_proteins_pilot], axis=0)
 
     # mse
-    main_model_protein_mse = np.mean((x_main_protein - x_est_main_obs_protein) ** 2)
-    pilot_model_protein_mse = np.mean(
-        (x_pilot_protein - x_est_pilot_obs_protein) ** 2
-    )
+    main_model_protein_mse = metrics.mse(x_main_protein, x_est_main_obs_protein)
+    pilot_model_protein_mse = metrics.mse(x_pilot_protein, x_est_pilot_obs_protein)
 
     # pearson
-    main_model_protein_pearson = pearsonr(x_main_protein, x_est_main_obs_protein)[0]
-    pilot_model_protein_pearson = pearsonr(x_pilot_protein, x_est_pilot_obs_protein)[0]
+    main_model_protein_pearson = metrics.pearson(x_main_protein, x_est_main_obs_protein)
+    pilot_model_protein_pearson = metrics.pearson(x_pilot_protein, x_est_pilot_obs_protein)
 
     result = {
         # entry-wise
         "main_model_mse": main_model_mse,
         "pilot_model_mse": pilot_model_mse,
-
         "main_model_pearson": main_model_pearson,
         "pilot_model_pearson": pilot_model_pearson,
-
         # protein-wise
         "main_model_protein_mse": main_model_protein_mse,
         "pilot_model_protein_mse": pilot_model_protein_mse,
-
         "main_model_protein_pearson": main_model_protein_pearson,
         "pilot_model_protein_pearson": pilot_model_protein_pearson,
     }
@@ -458,18 +453,15 @@ def compute_common_metrics_protDP(x_main, x_pilot, x_est_obs, x_est_miss):
 
     # mse
     main_model_protein_mse = np.nanmean((x_main_protein - x_est_main_protDP) ** 2)
-    pilot_model_protein_mse = np.nanmean(
-        (x_pilot_protein - x_est_pilot_protDP) ** 2
-    )
+    pilot_model_protein_mse = np.nanmean((x_pilot_protein - x_est_pilot_protDP) ** 2)
 
     # pearson
-    main_model_protein_pearson = pearsonr(x_main_protein, x_est_main_protDP)[0]
-    pilot_model_protein_pearson = pearsonr(x_pilot_protein, x_est_pilot_protDP)[0]
+    main_model_protein_pearson = metrics.pearson(x_main_protein, x_est_main_protDP)
+    pilot_model_protein_pearson = metrics.pearson(x_pilot_protein, x_est_pilot_protDP)
 
     result = {
         "main_model_protein_mse": main_model_protein_mse,
         "pilot_model_protein_mse": pilot_model_protein_mse,
-
         "main_model_protein_pearson": main_model_protein_pearson,
         "pilot_model_protein_pearson": pilot_model_protein_pearson,
     }
@@ -505,21 +497,44 @@ def get_protein_idx(x, min_protein_replicas):
     return idx_proteins
 
 
-def scatter_main_pilot_model(x_main, x_pilot, x_est, model_name="PROTVI", metrics=["pearson", "spearman", "mse"], n_min_protein_overlap=2):
-    idx_proteins_main_pilot = get_protein_overlap_idx(x_main, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
-    idx_proteins_model_pilot = get_protein_overlap_idx(x_est, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
+def scatter_main_pilot_model(
+    x_main,
+    x_pilot,
+    x_est,
+    model_name="PROTVI",
+    metric_types=["pearson", "spearman", "mse"],
+    n_min_protein_overlap=2,
+):
+    idx_proteins_main_pilot = get_protein_overlap_idx(
+        x_main, x_pilot, n_min_protein_overlap=n_min_protein_overlap
+    )
+    idx_proteins_model_pilot = get_protein_overlap_idx(
+        x_est, x_pilot, n_min_protein_overlap=n_min_protein_overlap
+    )
     idx_proteins = np.intersect1d(idx_proteins_main_pilot, idx_proteins_model_pilot)
 
-    main_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(x_main, x_pilot, idx_proteins=idx_proteins)
-    model_pilot_protein_comparison = utils.compute_overlapping_protein_correlations(x_est, x_pilot, idx_proteins=idx_proteins)
+    main_pilot_protein_comparison = metrics.compare_intensities_protein_wise(
+        x_main, x_pilot, idx_proteins=idx_proteins, metrics=metric_types
+    )
+    model_pilot_protein_comparison = metrics.compare_intensities_protein_wise(
+        x_est, x_pilot, idx_proteins=idx_proteins, metrics=metric_types
+    )
 
-    n_metrics = len(metrics)
+    n_metrics = len(metric_types)
     fig, axes = plt.subplots(ncols=n_metrics, figsize=(n_metrics * 6, 6))
 
-    for i, metric in enumerate(metrics):
+    for i, metric in enumerate(metric_types):
         ax = axes[i]
-        
-        ax.scatter(main_pilot_protein_comparison[metric], model_pilot_protein_comparison[metric], color="blue", edgecolor="black", linewidth=0, s=6, alpha=0.5)
+
+        ax.scatter(
+            main_pilot_protein_comparison[metric],
+            model_pilot_protein_comparison[metric],
+            color="blue",
+            edgecolor="black",
+            linewidth=0,
+            s=6,
+            alpha=0.5,
+        )
         ax.set_xlabel("MAIN - PILOT")
         ax.set_ylabel(f"{model_name} - PILOT")
         lims = [
@@ -546,5 +561,5 @@ def scatter_pilot_model_protein(x_main, x_pilot, x_est):
 
     x_est_protein = np.nanmean(x_est_miss_sub, axis=0)
     x_pilot_protein = np.nanmean(x_pilot_sub, axis=0)
-    
+
     pl.scatter_compare_protein_missing_intensity(x_pilot_protein, x_est_protein)
