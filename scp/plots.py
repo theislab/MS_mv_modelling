@@ -12,33 +12,63 @@ import scp.metrics as metrics
 #############################################
 
 
-def plot_loss(history, n_skip=0, pad=3):
+def plot_loss(history, epoch_start=0, validation_smooth_window=None, pad=3):
     fig, axes = plt.subplots(figsize=(16, 4), ncols=3, nrows=1)
     fig.tight_layout(pad=pad)
 
+    def _plot(key, color, ax):
+        if key not in history:
+            return
+
+        series = history[key]
+        offset = series.index >= epoch_start
+        ax.plot(series.iloc[offset], color=color)
+
+    def _smooth(history, key, window=10):
+        if key not in history:
+            return
+
+        new_key = f"{key}_smooth"
+        history[new_key] = history[key].rolling(window).median()
+        history[new_key].iloc[:window] = history[key].iloc[:window]
+
+    if validation_smooth_window is not None:
+        _smooth(history, "validation_loss", window=validation_smooth_window)
+        _smooth(
+            history, "reconstruction_loss_validation", window=validation_smooth_window
+        )
+        _smooth(history, "kl_local_validation", window=validation_smooth_window)
+
+    smooth_postfix = "_smooth" if validation_smooth_window is not None else ""
+
     ax = axes[0]
-    ax.plot(history["train_loss_epoch"].iloc[n_skip:])
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Total loss")
     ax.set_title("Total loss")
     ax.grid(True)
     ax.set_axisbelow(True)
+    _plot("train_loss_epoch", "blue", ax)
+    _plot("validation_loss" + smooth_postfix, "orange", ax)
 
     ax = axes[1]
-    ax.plot(history["reconstruction_loss_train"].iloc[n_skip:])
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Reconstruction loss")
     ax.set_title("Reconstruction loss")
     ax.grid(True)
     ax.set_axisbelow(True)
+    _plot("reconstruction_loss_train", "blue", ax)
+    _plot("reconstruction_loss_validation" + smooth_postfix, "orange", ax)
 
     ax = axes[2]
-    ax.plot(history["kl_local_train"].iloc[n_skip:])
     ax.set_xlabel("Epoch")
     ax.set_ylabel("KL-divergence")
     ax.set_title("KL-divergence")
     ax.grid(True)
     ax.set_axisbelow(True)
+    _plot("kl_local_train", "blue", ax)
+    _plot("kl_local_validation" + smooth_postfix, "orange", ax)
+
+    ax.legend(["Train", "Validation"], loc="upper right", markerscale=2)
 
 
 #############################################
@@ -325,7 +355,9 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     ax.set_axisbelow(True)
 
 
-def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, color="red", ax=None):
+def scatter_compare_protein_missing_intensity(
+    x_protein, x_est_protein, color="red", ax=None
+):
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
 
@@ -343,7 +375,7 @@ def scatter_compare_protein_missing_intensity(x_protein, x_est_protein, color="r
     ax.plot(
         [v_min, v_max], [v_min, v_max], color="black", linewidth=1.2, linestyle="--"
     )
-    
+
     mse = metrics.mse(x_protein, x_est_protein)
     ax.text(
         0.03,
