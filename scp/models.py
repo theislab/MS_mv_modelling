@@ -62,7 +62,7 @@ class PositiveSlopeGlobalLinear(nn.Module):
     
     def get_weights(self):
         weight = self.weight.detach().cpu()
-        weights = torch.exp(weight)
+        weight = torch.exp(weight)
 
         bias = None
         if self.bias is not None:
@@ -180,13 +180,8 @@ class ConjunctionDecoderPROTVI(nn.Module):
         return x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        weight = self.m_logit.weight.detach().cpu().numpy()
-
-        bias = None
-        if self.m_logit.bias is not None:
-            bias = self.m_logit.bias.detach().cpu().numpy()
-
-        return weight, bias
+        weight, bias = self.m_logit.get_weights()
+        return weight.numpy(), bias.numpy()
 
 
 class SelectionDecoderPROTVI(nn.Module):
