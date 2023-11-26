@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 ## nn modules
-class GlobalLinear(nn.Module):
+class PositiveSlopeGlobalLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -53,12 +53,22 @@ class GlobalLinear(nn.Module):
             nn.init.zeros_(self.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = x * self.weight
+        out = x * torch.exp(self.weight) # positive constraint
 
         if self.bias is not None:
             out += self.bias
 
         return out
+    
+    def get_weights(self):
+        weight = self.weight.detach().cpu()
+        weights = torch.exp(weight)
+
+        bias = None
+        if self.bias is not None:
+            bias = self.bias.detach().cpu()
+
+        return weight, bias
 
 
 class ElementwiseLinear(nn.Module):
@@ -124,7 +134,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             self.x_var = nn.Parameter(torch.randn(n_output))
 
         # z -> p
-        self.m_logit = GlobalLinear(n_output)
+        self.m_logit = PositiveSlopeGlobalLinear(n_output)
         self.m_prob_decoder = nn.Sequential(
             nn.Linear(n_hidden, n_output),
             self.m_logit,
@@ -213,7 +223,7 @@ class SelectionDecoderPROTVI(nn.Module):
             self.x_var = nn.Parameter(torch.randn(n_output))
 
         # x -> p
-        self.m_logit = GlobalLinear(n_output)
+        self.m_logit = PositiveSlopeGlobalLinear(n_output)
         self.m_prob_decoder = nn.Sequential(
             self.m_logit,
             nn.Sigmoid(),
@@ -265,13 +275,8 @@ class SelectionDecoderPROTVI(nn.Module):
         return x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        weight = self.m_logit.weight.detach().cpu().numpy()
-
-        bias = None
-        if self.m_logit.bias is not None:
-            bias = self.m_logit.bias.detach().cpu().numpy()
-
-        return weight, bias
+        weight, bias = self.m_logit.get_weights()
+        return weight.numpy(), bias.numpy()
 
 
 ## module
