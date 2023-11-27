@@ -527,7 +527,8 @@ class PROTVAE(BaseModuleClass):
             decoder_input = z.view(packed_shape)
 
         # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
-        x_obs_ref = x.repeat(n_samples, 1) if use_x else None
+        #x_obs_ref = x.repeat(n_samples, 1) if use_x else None
+        x_obs_ref = None
 
         x_mean, x_var, m_prob = self.decoder(
             decoder_input, x_obs_ref, batch_index, *categorical_input

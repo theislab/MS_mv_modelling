@@ -563,3 +563,31 @@ def scatter_pilot_model_protein(x_main, x_pilot, x_est):
     x_pilot_protein = np.nanmean(x_pilot_sub, axis=0)
 
     pl.scatter_compare_protein_missing_intensity(x_pilot_protein, x_est_protein)
+
+
+def scatter_pilot_main_protein(x_main, x_pilot):
+    pilot_mask = np.logical_and(np.isnan(x_main), ~np.isnan(x_pilot))
+    main_mask = ~pilot_mask
+
+    pilot_protein_mask = pilot_mask.any(axis=0)
+    main_protein_mask =  main_mask.any(axis=0)
+
+    # overlap between the masks
+    protein_mask = pilot_protein_mask & main_protein_mask
+
+    x_main_sub = x_main.copy()
+    x_main_sub[~main_mask] = np.nan
+    x_main_sub = x_main_sub[:, protein_mask]
+
+    x_pilot_sub = x_pilot.copy()
+    x_pilot_sub[~pilot_mask] = np.nan
+    x_pilot_sub = x_pilot_sub[:, protein_mask]
+
+    x_main_protein = np.nanmean(x_main_sub, axis=0)
+    x_pilot_protein = np.nanmean(x_pilot_sub, axis=0)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    pl.scatter_compare_protein_missing_intensity(x_pilot_protein, x_main_protein, ax=ax)
+    ax.set_xlabel("pilot protein intensity")
+    ax.set_ylabel("main protein intensity")
+    ax.set_title("Intensity per protein between main and pilot")

@@ -122,17 +122,19 @@ def scatter_protein_mean_and_cv(x, title=None, ax=None):
     ax.set_axisbelow(True)
 
 
-def plot_protein_detection_proportion_panel(x, p_est, color="blue", title="PROTVI"):
+def plot_protein_detection_proportion_panel(x, p_est, x_est=None, color="blue", title="PROTVI"):
     x_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
     p_est_protein = p_est.mean(axis=0)
+
+    x_est_protein = np.nanmean(x_est, axis=0) if x_est is not None else None
 
     fig, axes = plt.subplots(figsize=(20, 5), ncols=4)
     fig.suptitle(title, fontsize=16, y=1.03)
     fig.tight_layout(w_pad=3)
 
     _scatter_compare_protein_detection_proportion_and_intensity(
-        x_protein, p_protein, p_est_protein, color=color, ax=axes[0]
+        x_protein, p_protein, p_est_protein, x_est_protein=x_est_protein, color=color, ax=axes[0]
     )
 
     _scatter_compare_protein_detection_proportion(
@@ -147,7 +149,7 @@ def plot_protein_detection_proportion_panel(x, p_est, color="blue", title="PROTV
 
 
 def _scatter_compare_protein_detection_proportion_and_intensity(
-    x_protein, p_protein, p_est_protein, color="blue", ax=None
+    x_protein, p_protein, p_est_protein, x_est_protein=None, color="blue", ax=None
 ):
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -161,7 +163,7 @@ def _scatter_compare_protein_detection_proportion_and_intensity(
         label="Observed",
     )
     ax.scatter(
-        x_protein,
+        x_est_protein if x_est_protein is not None else x_protein,
         p_est_protein,
         color=color,
         s=4,
