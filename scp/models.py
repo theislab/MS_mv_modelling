@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 ## nn modules
-class PositiveSlopeGlobalLinear(nn.Module):
+class GlobalLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -53,22 +53,12 @@ class PositiveSlopeGlobalLinear(nn.Module):
             nn.init.zeros_(self.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = x * torch.exp(self.weight) # positive constraint
+        out = x * self.weight
 
         if self.bias is not None:
             out += self.bias
 
         return out
-    
-    def get_weights(self):
-        weight = self.weight.detach().cpu()
-        weight = torch.exp(weight)
-
-        bias = None
-        if self.bias is not None:
-            bias = self.bias.detach().cpu()
-
-        return weight, bias
 
 
 class ElementwiseLinear(nn.Module):
@@ -134,7 +124,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             self.x_var = nn.Parameter(torch.randn(n_output))
 
         # z -> p
-        self.m_logit = PositiveSlopeGlobalLinear(n_output)
+        self.m_logit = GlobalLinear(n_output)
         self.m_prob_decoder = nn.Sequential(
             nn.Linear(n_hidden, n_output),
             self.m_logit,
@@ -180,8 +170,95 @@ class ConjunctionDecoderPROTVI(nn.Module):
         return x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        weight, bias = self.m_logit.get_weights()
-        return weight.numpy(), bias.numpy()
+        weight = self.m_logit.weight.detach().cpu().numpy()
+
+        bias = None
+        if self.m_logit.bias is not None:
+            bias = self.m_logit.bias.detach().cpu().numpy()
+
+        return weight, bias
+    
+
+class HybridDecoderPROTVI(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        x_variance: Literal["protein", "protein-cell"] = "protein",
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.x_variance = x_variance
+
+        # z -> px
+        self.h_decoder = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=0,
+            **kwargs,
+        )
+
+        self.x_mean_decoder = nn.Linear(n_hidden, n_output)
+
+        if self.x_variance == "protein-cell":
+            self.x_var_decoder = nn.Linear(n_hidden, n_output)
+        elif self.x_variance == "protein":
+            self.x_var = nn.Parameter(torch.randn(n_output))
+
+        # z -> p, x -> p
+        self.x_p = GlobalLinear(n_output)
+        self.z_p = nn.Linear(n_hidden, 1)
+
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
+        """The forward computation for a single sample.
+
+         #. Decodes the data from the latent space using the decoder network
+         #. Returns tensors for the mean and variance of a multivariate distribution
+
+        Parameters
+        ----------
+        z
+            tensor with shape ``(n_input,)``
+        x_data
+            tensor with shape ``(n_output,)``
+        cat_list
+            list of category membership(s) for this sample
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            mean, variance, and detection probability tensors
+
+        """
+
+        # z -> x
+        h = self.h_decoder(z, *cat_list)
+        x_mean = self.x_mean_decoder(h)
+
+        if self.x_variance == "protein-cell":
+            x_var = self.x_var_decoder(h)
+        elif self.x_variance == "protein":
+            x_var = self.x_var
+
+        x_var = torch.exp(x_var)
+
+        # z -> p, x -> p
+        z_p = self.z_p(h)
+        x_p = self.x_p(x_mean)
+
+        m_prob = torch.sigmoid(z_p + x_p)
+
+        return x_mean, x_var, m_prob
+
+    def get_mask_logit_weights(self):
+        return None, None
 
 
 class SelectionDecoderPROTVI(nn.Module):
@@ -199,7 +276,7 @@ class SelectionDecoderPROTVI(nn.Module):
 
         self.x_variance = x_variance
 
-        # z -> px
+        # z -> x
         self.x_decoder = FCLayers(
             n_in=n_input,
             n_out=n_hidden,
@@ -218,7 +295,7 @@ class SelectionDecoderPROTVI(nn.Module):
             self.x_var = nn.Parameter(torch.randn(n_output))
 
         # x -> p
-        self.m_logit = PositiveSlopeGlobalLinear(n_output)
+        self.m_logit = GlobalLinear(n_output)
         self.m_prob_decoder = nn.Sequential(
             self.m_logit,
             nn.Sigmoid(),
@@ -246,14 +323,14 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
 
-        # z -> px
+        # z -> x
         x_h = self.x_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(x_h)
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(x_h)
         elif self.x_variance == "protein":
-            x_var = self.x_var.expand(x_mean.shape)
+            x_var = self.x_var
 
         x_var = torch.exp(x_var)
 
@@ -261,7 +338,6 @@ class SelectionDecoderPROTVI(nn.Module):
         if x_data is None:
             x_p = x_mean
         else:
-            # replace the imputed intensities with observed intensities to compute the detection probabilities.
             m = x_data != 0
             x_p = x_data * m + x_mean * (~m)
 
@@ -270,8 +346,13 @@ class SelectionDecoderPROTVI(nn.Module):
         return x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        weight, bias = self.m_logit.get_weights()
-        return weight.numpy(), bias.numpy()
+        weight = self.m_logit.weight.detach().cpu().numpy()
+
+        bias = None
+        if self.m_logit.bias is not None:
+            bias = self.m_logit.bias.detach().cpu().numpy()
+
+        return weight, bias
 
 
 ## module
@@ -326,36 +407,21 @@ class PROTVAE(BaseModuleClass):
         n_cats_per_cov: Optional[Iterable[int]] = None,
         dropout_rate: Tunable[float] = 0.1,
         log_variational: Tunable[bool] = True,
-        latent_distribution: Tunable[Literal["normal"]] = "normal",
+        latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
         x_variance: Literal["protein", "protein-cell"] = "protein",
         encode_covariates: Tunable[bool] = False,
         deeply_inject_covariates: Tunable[bool] = True,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
         var_activation: Tunable[Callable] = None,
-        decoder_type: Tunable[Literal["selection", "conjunction"]] = "selection",
-        loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
-        n_samples: Tunable[int] = None,
+        decoder_type: Tunable[Literal["selection", "conjunction", "hybrid"]] = "selection",
     ):
         super().__init__()
-
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.x_variance = x_variance
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
-        self.loss_type = loss_type
-
-        if loss_type == "elbo":
-            self.loss_fn = self._elbo_loss
-            self.n_samples = 1 if n_samples is None else n_samples
-
-        elif loss_type == "iwae":
-            self.loss_fn = self._iwae_loss
-            self.n_samples = 15 if n_samples is None else n_samples
-
-        else:
-            raise ValueError(f"Invalid loss type: {loss_type}")
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -407,6 +473,18 @@ class PROTVAE(BaseModuleClass):
                 use_batch_norm=use_batch_norm_decoder,
                 use_layer_norm=use_layer_norm_decoder,
             )
+        elif decoder_type == "hybrid":
+            self.decoder = HybridDecoderPROTVI(
+                n_input=n_input_decoder,
+                n_output=n_input,
+                n_cat_list=cat_list,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                x_variance=x_variance,
+                inject_covariates=deeply_inject_covariates,
+                use_batch_norm=use_batch_norm_decoder,
+                use_layer_norm=use_layer_norm_decoder,
+            )
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -433,15 +511,11 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-        n_samples=None,
     ):
         """High level inference method.
 
         Runs the inference (encoder) model.
         """
-
-        if n_samples is None:
-            n_samples = self.n_samples
 
         if self.log_variational:
             x = torch.log(1 + x)
@@ -456,11 +530,7 @@ class PROTVAE(BaseModuleClass):
         else:
             categorical_input = ()
 
-        # @TODO: create protvi encoder
-        qz, _ = self.encoder(encoder_input, batch_index, *categorical_input)
-
-        # shape: (n_samples, n_batch, n_latent)
-        z = qz.rsample(torch.Size([n_samples]))
+        qz, z = self.encoder(encoder_input, batch_index, *categorical_input)
 
         return {
             "qz": qz,
@@ -499,46 +569,27 @@ class PROTVAE(BaseModuleClass):
     ):
         """Runs the generative model."""
 
-        n_samples, n_batch = z.size(0), z.size(1)
-
-        packed_shape = (n_samples * n_batch, -1)
-        unpacked_shape = (n_samples, n_batch, -1)
-
         if self.log_variational:
             x = torch.log(1 + x)
 
-        if batch_index is not None:
-            # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
-            batch_index = batch_index.repeat(n_samples, 1)
+        if cont_covs is None:
+            decoder_input = z
+        elif z.dim() != cont_covs.dim():
+            decoder_input = torch.cat(
+                [z, cont_covs.unsqueeze(0).expand(z.size(0), -1, -1)], dim=-1
+            )
+        else:
+            decoder_input = torch.cat([z, cont_covs], dim=-1)
 
         if cat_covs is not None:
-            # shape: (n_batch, n_cat_covs) -> (n_samples * n_batch, n_cat_covs)
-            cat_covs_repeat = cat_covs.repeat(n_samples, 1)
-            categorical_input = torch.split(cat_covs_repeat, 1, dim=1)
+            categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = ()
 
-        if cont_covs is not None:
-            # shape: (n_samples, n_batch, n_input) -> (n_samples * n_batch, n_input + n_cont_covs)
-            cont_conv_repeat = cont_covs.repeat(n_samples, 1)
-            decoder_input = torch.cat([z.view(packed_shape), cont_conv_repeat], dim=-1)
-        else:
-            # (n_samples, n_batch, n_input) -> (n_samples * n_batch, n_input)
-            decoder_input = z.view(packed_shape)
-
-        # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
-        #x_obs_ref = x.repeat(n_samples, 1) if use_x else None
-        x_obs_ref = None
-
+        x_d = x if use_x else None
         x_mean, x_var, m_prob = self.decoder(
-            decoder_input, x_obs_ref, batch_index, *categorical_input
+            decoder_input, x_d, batch_index, *categorical_input
         )
-
-        # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
-        x_mean = x_mean.view(unpacked_shape)
-        x_var = x_var.view(unpacked_shape)
-        m_prob = m_prob.view(unpacked_shape)
-
         return {
             "x_mean": x_mean,
             "x_var": x_var,
@@ -555,136 +606,44 @@ class PROTVAE(BaseModuleClass):
     ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
-        z = inference_outputs["z"]
 
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
 
-        # @TODO: remove
-        """
-        if self.loss_type == "elbo_old":
-            x_mean = x_mean[0]
-            x_var = x_var[0]
-            m_prob = m_prob[0]
-            z = z[0]
-        """
-
-        px = Normal(x_mean, torch.sqrt(x_var))
-        pm = Bernoulli(m_prob)
-
         qz = inference_outputs["qz"]
-        pz = Normal(loc=0.0, scale=1.0)
+        pz = Normal(torch.zeros_like(qz.loc), torch.ones_like(qz.scale))
 
-        return self.loss_fn(
-            x=x,
-            z=z,
-            qz=qz,
-            pz=pz,
-            px=px,
-            pm=pm,
-            kl_weight=kl_weight,
-            mechanism_weight=mechanism_weight,
+        kl_divergence = kl(qz, pz).sum(dim=-1)
+        weighted_kl = kl_weight * kl_divergence
+        reconst_loss = self._get_reconstruction_loss(
+            x, x_mean, x_var, m_prob, mechanism_weight=mechanism_weight
         )
 
-    # @TODO: remove
-    """
-    def _elbo_loss_old(
-        self, x, px, pm, pz, qz, mechanism_weight=1.0, kl_weight=1.0, **kwargs
-    ):
-        ## reconstruction loss
+        loss = torch.mean(reconst_loss + weighted_kl)
+
+        return LossOutput(
+            loss=loss, reconstruction_loss=reconst_loss, kl_local=kl_divergence
+        )
+
+    def sample(self):
+        raise NotImplementedError
+
+    def _get_reconstruction_loss(self, x, x_mean, x_var, m_prob, mechanism_weight=1.0):
         m_obs = x != 0
         m_miss = ~m_obs
 
-        ll_x = px.log_prob(x)
-        ll_m = mechanism_weight * pm.log_prob(m_obs.type(torch.float32))
+        x_std = torch.sqrt(x_var)
+        ll_x = Normal(x_mean, x_std).log_prob(x)
+        ll_m = mechanism_weight * Bernoulli(m_prob).log_prob(m_obs.type(torch.float32))
 
         ll = torch.empty_like(x)
         ll[m_obs] = ll_x[m_obs] + ll_m[m_obs]
         ll[m_miss] = ll_m[m_miss]
 
-        reconstruction_loss = -torch.sum(ll, dim=-1)
+        nll = -torch.sum(ll, dim=-1)
 
-        ## KL
-        # (n_batch, n_latent) -> (n_batch,)
-        kl_divergence = kl(qz, pz).sum(dim=-1)
-        weighted_kl = kl_weight * kl_divergence
-
-        ## ELBO
-        loss = torch.mean(reconstruction_loss + weighted_kl)
-
-        return LossOutput(
-            loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
-        )
-    """
-
-    def _elbo_loss(
-        self,
-        x,
-        qz,
-        pz,
-        px,
-        pm,
-        kl_weight: float = 1.0,
-        mechanism_weight: float = 1.0,
-        **kwargs,
-    ):
-        ## reconstruction loss
-        m_obs = x != 0
-
-        lpx = m_obs * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(m_obs.type(torch.float32))
-
-        # average over samples, (n_samples, n_batch, n_input) -> (n_batch, n_input)
-        lpd = torch.mean(lpx + lpm, dim=0)
-        # lpd = lpx + lpm
-
-        # sum over features: (n_batch, n_input) -> (n_batch,)
-        reconstruction_loss = -torch.sum(lpd, dim=-1)
-
-        ## KL
-        # (n_batch, n_latent) -> (n_batch,)
-        kl_divergence = kl(qz, pz).sum(dim=-1)
-        weighted_kl = kl_divergence * kl_weight
-
-        ## ELBO
-        loss = torch.mean(reconstruction_loss + weighted_kl)
-
-        return LossOutput(
-            loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
-        )
-
-    def _iwae_loss(
-        self,
-        x,
-        z,
-        qz,
-        pz,
-        px,
-        pm,
-        mechanism_weight: float = 1.0,
-        **kwargs,
-    ):
-        m_obs = x != 0
-
-        # sum over features: (n_samples, n_batch, n_input) -> (n_samples, n_batch)
-        lpx = (m_obs * px.log_prob(x)).sum(dim=-1)
-        lpm = mechanism_weight * pm.log_prob(m_obs.type(torch.float32)).sum(dim=-1)
-
-        lpz = pz.log_prob(z).sum(dim=-1)
-        lqz = qz.log_prob(z).sum(dim=-1)
-
-        lw = lpx + lpm + lpz - lqz
-
-        # sum over samples: (n_samples, n_batch) -> (n_batch,)
-        lw_sum = torch.logsumexp(lw, dim=0) - np.log(lw.size(0))
-
-        loss = -torch.mean(lw_sum)
-
-        return LossOutput(loss=loss, n_obs_minibatch=x.size(0))
-
-    def sample(self):
-        raise NotImplementedError
+        return nll
 
 
 ## downstream utils
@@ -695,7 +654,6 @@ class ProteinMixin:
         adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
         batch_size: Optional[int] = None,
-        n_samples: Optional[int] = None,
     ):
         """
         Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
@@ -733,39 +691,24 @@ class ProteinMixin:
             shuffle=False,
         )
 
-        xs_list = []
-        ps_list = []
+        intensity_list = []
+        detection_probability_list = []
         for tensors in scdl:
-            inference_kwargs = {"n_samples": n_samples}
             generative_kwargs = {"use_x": True}
             _, generative_outputs = self.module.forward(
-                tensors=tensors,
-                compute_loss=False,
-                generative_kwargs=generative_kwargs,
-                inference_kwargs=inference_kwargs,
+                tensors=tensors, compute_loss=False, generative_kwargs=generative_kwargs
             )
 
             x_mean = generative_outputs["x_mean"].cpu().numpy()
             m_prob = generative_outputs["m_prob"].cpu().numpy()
 
-            loss_type = self.module.loss_type
-            if loss_type == "elbo":
-                x_imp = np.mean(x_mean, axis=0)
-                p_imp = np.mean(m_prob, axis=0)
-            elif loss_type == "iwae":
-                # @TODO: weight by importance weights
-                x_imp = np.mean(x_mean, axis=0)
-                p_imp = np.mean(m_prob, axis=0)
-            else:
-                raise ValueError(f"Invalid loss type: {loss_type}")
+            intensity_list.append(x_mean)
+            detection_probability_list.append(m_prob)
 
-            xs_list.append(x_imp)
-            ps_list.append(p_imp)
+        intensities = np.concatenate(intensity_list, axis=0)
+        detection_probabilities = np.concatenate(detection_probability_list, axis=0)
 
-        xs = np.concatenate(xs_list, axis=0)
-        ps = np.concatenate(ps_list, axis=0)
-
-        return xs, ps
+        return intensities, detection_probabilities
 
 
 ## model
@@ -805,12 +748,10 @@ class PROTVI(
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        latent_distribution: Literal["normal"] = "normal",
+        latent_distribution: Literal["normal", "ln"] = "normal",
         x_variance: Literal["protein", "protein-cell"] = "protein",
         log_variational: bool = True,
-        decoder_type: Tunable[Literal["selection", "conjunction"]] = "selection",
-        loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
-        n_samples: Tunable[int] = None,
+        decoder_type: Tunable[Literal["selection", "conjunction", "hybrid"]] = "selection",
     ):
         super().__init__(adata)
 
@@ -836,13 +777,11 @@ class PROTVI(
             latent_distribution=latent_distribution,
             log_variational=log_variational,
             decoder_type=decoder_type,
-            loss_type=loss_type,
-            n_samples=n_samples,
         )
 
         self._model_summary_string = (
-            "PROTVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: {}"
-        ).format(n_hidden, n_latent, n_layers, dropout_rate)
+            "PROTVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: , latent_distribution: {}"
+        ).format(n_hidden, n_latent, n_layers, dropout_rate, latent_distribution)
 
         self.init_params_ = self._get_init_params(locals())
 

@@ -32,6 +32,13 @@ def filter_by_detection_proportion(adata, min_coverage=0.1):
 
 
 ## AnnData
+def sort_anndata_by_missingness(adata, layer=None):
+    x = adata.X if layer is None else adata.layers[layer]
+    missingness = pd.DataFrame(np.mean(np.isnan(x), axis=0), columns=["missingness"])
+    missingness.sort_values(by="missingness", ascending=True, inplace=True)
+    return adata[:, missingness.index]
+
+
 def reshape_anndata_like(adata, adata_like, sanity_check=True, verbose=True):
     """
     Reshape adata.X into the shape of adata_like.X.

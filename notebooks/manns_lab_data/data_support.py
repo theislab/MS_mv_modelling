@@ -385,7 +385,7 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     m_pilot = ~np.isnan(x_pilot)
     m_main = ~np.isnan(x_main)
 
-    ## entry-wise ##
+    ## entry-wise intensities ##
 
     # mse
     main_model_mse = metrics.mse(x_main[m_main], x_est[m_main])
@@ -395,7 +395,7 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     main_model_pearson = metrics.pearson(x_main[m_main], x_est[m_main])
     pilot_model_pearson = metrics.pearson(x_pilot[m_pilot], x_est[m_pilot])
 
-    ## protein-wise ##
+    ## protein-wise intensities ##
     x_est_main_obs = x_est.copy()
     x_est_main_obs[~m_main] = np.nan
 
@@ -419,6 +419,11 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     # pearson
     main_model_protein_pearson = metrics.pearson(x_main_protein, x_est_main_obs_protein)
     pilot_model_protein_pearson = metrics.pearson(x_pilot_protein, x_est_pilot_obs_protein)
+
+    ## protein-wise difference intensities ##
+
+    # compare difference between estimated protein intensities and pilot in the categories obs and miss - based on main.
+    
 
     result = {
         # entry-wise
@@ -573,10 +578,10 @@ def scatter_pilot_main_protein(x_main, x_pilot):
     main_protein_mask =  main_mask.any(axis=0)
 
     # overlap between the masks
-    protein_mask = pilot_protein_mask & main_protein_mask
+    protein_mask = pilot_protein_mask #& main_protein_mask
 
     x_main_sub = x_main.copy()
-    x_main_sub[~main_mask] = np.nan
+    #x_main_sub[~main_mask] = np.nan
     x_main_sub = x_main_sub[:, protein_mask]
 
     x_pilot_sub = x_pilot.copy()
@@ -591,3 +596,31 @@ def scatter_pilot_main_protein(x_main, x_pilot):
     ax.set_xlabel("pilot protein intensity")
     ax.set_ylabel("main protein intensity")
     ax.set_title("Intensity per protein between main and pilot")
+
+
+def scatter_pilot_pilot_protein(x_main, x_pilot):
+    miss_mask = np.logical_and(np.isnan(x_main), ~np.isnan(x_pilot))
+    obs_mask = np.logical_and(~np.isnan(x_main), ~np.isnan(x_pilot))
+
+    miss_protein_mask = miss_mask.any(axis=0)
+    obs_protein_mask = obs_mask.any(axis=0)
+
+    # overlap between the masks
+    protein_mask = obs_protein_mask & miss_protein_mask
+
+    x_obs_sub = x_pilot.copy()
+    x_obs_sub[~obs_mask] = np.nan
+    x_obs_sub = x_obs_sub[:, protein_mask]
+
+    x_miss_sub = x_pilot.copy()
+    x_miss_sub[~miss_mask] = np.nan
+    x_miss_sub = x_miss_sub[:, protein_mask]
+
+    x_obs_protein = np.nanmean(x_obs_sub, axis=0)
+    x_miss_protein = np.nanmean(x_miss_sub, axis=0)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    pl.scatter_compare_protein_missing_intensity(x_miss_protein, x_obs_protein, ax=ax)
+    ax.set_xlabel("pilot miss protein intensity")
+    ax.set_ylabel("pilot obs protein intensity")
+    ax.set_title("Intensity per protein between observed and missing in pilot")
