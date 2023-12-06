@@ -32,9 +32,13 @@ def filter_by_detection_proportion(adata, min_coverage=0.1):
 
 
 ## AnnData
-def sort_anndata_by_missingness(adata, layer=None):
+def get_missingness_per_protein(adata, layer=None):
     x = adata.X if layer is None else adata.layers[layer]
-    missingness = pd.DataFrame(np.mean(np.isnan(x), axis=0), columns=["missingness"])
+    return np.mean(np.isnan(x), axis=0)
+
+
+def sort_anndata_by_missingness(adata, layer=None):
+    missingness = pd.DataFrame(get_missingness_per_protein(adata, layer=layer), columns=["missingness"])
     missingness.sort_values(by="missingness", ascending=True, inplace=True)
     return adata[:, missingness.index]
 
