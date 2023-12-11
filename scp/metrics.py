@@ -39,14 +39,15 @@ def compare_intensities_protein_wise(
     idx_proteins_ok = idx_proteins[n_intensities_per_protein[idx_proteins] >= n_min_overlap]
 
     result = {metric: [] for metric in metrics}
+    result["protein_idx"] = idx_proteins_ok
 
     metric_fns = {metric: globals()[metric] for metric in metrics}
 
-    for col in idx_proteins_ok:
-        rows = overlap_mask[:, col]
+    for protein_idx in idx_proteins_ok:
+        row_overlap = overlap_mask[:, protein_idx]
 
-        x1_protein = x1[rows, col]
-        x2_protein = x2[rows, col]
+        x1_protein = x1[row_overlap, protein_idx]
+        x2_protein = x2[row_overlap, protein_idx]
 
         for metric, fn in metric_fns.items():
             value = fn(x1_protein, x2_protein)

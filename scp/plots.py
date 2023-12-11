@@ -83,7 +83,7 @@ def scatter_protein_detection_proportion_and_intensity(x, title=None, ax=None):
     x_obs_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
 
-    ax.scatter(x_obs_protein, p_protein, color="blue", alpha=1, s=6)
+    ax.scatter(x_obs_protein, p_protein, color="blue", alpha=.3, s=4)
     ax.set_title(title)
     ax.set_xlabel("protein log-intensity")
     ax.set_ylabel("detection proportion")
@@ -129,8 +129,8 @@ def plot_protein_detection_proportion_panel(x, p_est, x_est=None, color="blue", 
 
     x_est_protein = np.nanmean(x_est, axis=0) if x_est is not None else None
 
-    fig, axes = plt.subplots(figsize=(20, 5), ncols=4)
-    fig.suptitle(title, fontsize=16, y=1.03)
+    fig, axes = plt.subplots(figsize=(16, 4), ncols=4)
+    fig.suptitle(title, fontsize=12, y=1.05)
     fig.tight_layout(w_pad=3)
 
     _scatter_compare_protein_detection_proportion_and_intensity(
@@ -158,7 +158,7 @@ def _scatter_compare_protein_detection_proportion_and_intensity(
         x_protein,
         p_protein,
         color="black",
-        s=4,
+        s=2,
         alpha=0.4,
         label="Observed",
     )
@@ -166,13 +166,13 @@ def _scatter_compare_protein_detection_proportion_and_intensity(
         x_est_protein if x_est_protein is not None else x_protein,
         p_est_protein,
         color=color,
-        s=4,
+        s=2,
         alpha=0.4,
         label="Predicted",
     )
     ax.set_xlabel("Avg. observed log-intensity")
     ax.set_ylabel("Detection proportion")
-    ax.set_title("Protein log-intensity vs. detection proportion")
+    ax.set_title("Protein log-intensity vs.\n detection proportion")
     ax.legend()
     ax.grid(True)
     ax.set_axisbelow(True)
@@ -208,7 +208,7 @@ def _scatter_compare_protein_detection_proportion(
     ax.set(xlim=[0, 1], ylim=[0, 1])
     ax.set_xlabel("Observed detection proportion")
     ax.set_ylabel("Predicted detection proportion")
-    ax.set_title("Observed vs. predicted protein detection proportion")
+    ax.set_title("Observed vs. predicted\n protein detection proportion")
     ax.grid(True)
     ax.set_axisbelow(True)
 
@@ -246,7 +246,7 @@ def _scatter_compare_protein_detection_proportion_difference(
 
 
 def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
-    fig, axes = plt.subplots(figsize=(18, 6), ncols=3)
+    fig, axes = plt.subplots(figsize=(16, 5), ncols=3)
     fig.tight_layout(pad=4)
     fig.suptitle(title, fontsize=16, y=1.05)
 
@@ -593,7 +593,6 @@ def plot_model_intensity_comparison(
 #############################################
 
 
-# @TODO: consider creating a ProtDP wrapper class for protdp_result
 def plot_protein_detection_proportion_panel_protDP(
     x, protdp_result, color="blue", title="protDP"
 ):
@@ -605,9 +604,9 @@ def plot_protein_detection_proportion_panel_protDP(
 
     sigmoid = lambda x: 1 / (1 + np.exp(-x))
 
-    fig, axes = plt.subplots(figsize=(18, 5), ncols=4)
-    fig.tight_layout(pad=4)
-    fig.suptitle(title, fontsize=16, y=1.05)
+    fig, axes = plt.subplots(figsize=(16, 4), ncols=4)
+    fig.suptitle(title, fontsize=12, y=1.05)
+    fig.tight_layout(w_pad=3)
 
     ax = axes[0]
     min_intensity = np.nanmin(x_protein)

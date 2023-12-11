@@ -70,6 +70,7 @@ def reshape_anndata_like(adata, adata_like, sanity_check=True, verbose=True):
         index=adata_like.obs.index,
         columns=adata.obs.columns,
     )
+    obs = obs.astype(object)
     obs.loc[row_overlap, :] = adata[row_overlap, :].obs.copy()
 
     var = pd.DataFrame(
@@ -77,6 +78,7 @@ def reshape_anndata_like(adata, adata_like, sanity_check=True, verbose=True):
         index=adata_like.var.index,
         columns=adata.var.columns,
     )
+    var = var.astype(object)
     var.loc[col_overlap, :] = adata[:, col_overlap].var.copy()
 
     result = sc.AnnData(
