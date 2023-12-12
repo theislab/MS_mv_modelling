@@ -56,6 +56,51 @@ def simulate_group(
     return adata
 
 
+def simulate_two_groups(
+    n_group1=500,
+    n_group2=500,
+    n_proteins=900,
+    n_de_proteins=300,
+    log2_fold_change=1,
+):
+    """
+    Simulate two groups of cells with differentially expressed proteins.
+    """
+
+    ensure_seed_set()
+
+    assert n_de_proteins <= n_proteins, "n_de_proteins can't be larger than n_proteins"
+
+    n_cells = n_group1 + n_group2
+
+    idx_group_1 = np.arange(n_group1)
+    idx_group_2 = np.arange(n_group1, n_cells)
+
+    idx_de_up = np.arange(n_de_proteins // 2)
+    idx_de_down = np.arange(n_de_proteins // 2, n_de_proteins)
+
+    mean_protein = rng.uniform(5, 12, n_proteins)
+    var_protein = 0.3 * np.ones(n_proteins)
+
+    x = rng.normal(mean_protein, var_protein, (n_cells, n_proteins))
+    x[np.ix_(idx_group_1, idx_de_up)] += log2_fold_change
+    x[np.ix_(idx_group_1, idx_de_down)] -= log2_fold_change
+
+    # x_protein = np.mean(x, axis=0)
+    # prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
+    # prob = np.tile(prob, (n_cells, 1))
+    prob = logit_linear(x, b0=-6.0, b1=0.8)
+
+    mask = create_sampled_mask(prob)
+
+    adata = create_dataset(x, prob, mask)
+    adata.obs["group"] = ""
+    adata.obs["group"].iloc[idx_group_1] = "g1"
+    adata.obs["group"].iloc[idx_group_2] = "g2"
+
+    return adata
+
+
 def simulate_group_advanced(
     n_cells=2000,
     n_proteins=1000,
@@ -98,51 +143,6 @@ def simulate_group_advanced(
     mask = mcar_mask * mnar_mask
     adata = create_dataset(measurement, prob, mask)
     adata.obs["group"] = "g1"
-
-    return adata
-
-
-def simulate_two_groups(
-    n_group1=500,
-    n_group2=500,
-    n_proteins=900,
-    n_de_proteins=300,
-    log2_fold_change=1,
-):
-    """
-    Simulate two groups of cells with differentially expressed proteins.
-    """
-
-    ensure_seed_set()
-
-    assert n_de_proteins <= n_proteins, "n_de_proteins can't be larger than n_proteins"
-
-    n_cells = n_group1 + n_group2
-
-    idx_group_1 = np.arange(n_group1)
-    idx_group_2 = np.arange(n_group1, n_cells)
-
-    idx_de_up = np.arange(n_de_proteins // 2)
-    idx_de_down = np.arange(n_de_proteins // 2, n_de_proteins)
-
-    mean_protein = rng.uniform(5, 12, n_proteins)
-    var_protein = 0.3 * np.ones(n_proteins)
-
-    x = rng.normal(mean_protein, var_protein, (n_cells, n_proteins))
-    x[np.ix_(idx_group_1, idx_de_up)] += log2_fold_change
-    x[np.ix_(idx_group_1, idx_de_down)] -= log2_fold_change
-
-    # x_protein = np.mean(x, axis=0)
-    # prob = logit_linear(x_protein, b0=-6.0, b1=0.8)
-    # prob = np.tile(prob, (n_cells, 1))
-    prob = logit_linear(x, b0=-6.0, b1=0.8)
-
-    mask = create_sampled_mask(prob)
-
-    adata = create_dataset(x, prob, mask)
-    adata.obs["group"] = ""
-    adata.obs["group"].iloc[idx_group_1] = "g1"
-    adata.obs["group"].iloc[idx_group_2] = "g2"
 
     return adata
 

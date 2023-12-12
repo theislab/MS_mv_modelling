@@ -692,7 +692,7 @@ class PROTVAE(BaseModuleClass):
             loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
         )
 
-    def _get_importance_weights(self, x, z, qz, pz, px, pm, mechanism_weight):
+    def _get_importance_weights(self, x, z, qz, pz, px, pm, mechanism_weight=1.0):
         m_obs = x != 0
 
         # sum over features: (n_samples, n_batch, n_input) -> (n_samples, n_batch)
@@ -739,6 +739,7 @@ class ProteinMixin:
         indices: Optional[Sequence[int]] = None,
         n_samples: Optional[int] = None,
         batch_size: int = 32,
+        loss_type: Optional[Literal["elbo", "iwae"]] = None,
     ):
         """
         Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
@@ -773,6 +774,9 @@ class ProteinMixin:
             shuffle=False,
         )
 
+        if loss_type is None:
+            loss_type = self.module.loss_type
+
         xs_list = []
         ps_list = []
         for tensors in scdl:
@@ -788,7 +792,6 @@ class ProteinMixin:
             x_mean = generative_outputs["x_mean"].cpu().numpy()
             m_prob = generative_outputs["m_prob"].cpu().numpy()
 
-            loss_type = self.module.loss_type
             if loss_type == "elbo":
                 x_imp = np.mean(x_mean, axis=0)
                 p_imp = np.mean(m_prob, axis=0)
