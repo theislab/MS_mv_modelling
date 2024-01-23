@@ -59,7 +59,7 @@ def reshape_anndata_like(adata, adata_like, sanity_check=True, verbose=True):
 
     if verbose:
         print(
-            f"transfering {len(row_overlap)} cells and {len(col_overlap)} proteins during reshape."
+            f"transferring {len(row_overlap)} cells and {len(col_overlap)} proteins during reshape."
         )
 
     x = pd.DataFrame(np.nan, index=adata_like.obs.index, columns=adata_like.var.index)

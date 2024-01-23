@@ -14,6 +14,8 @@ import scp.metrics as metrics
 
 
 # data loading
+import os 
+
 def load_main_data(dir: str):
     annotations_path = os.path.join(dir, "annotations_main_lt_v21_Sc11_AIMsplit3.tsv")
     data_path = os.path.join(
@@ -132,9 +134,10 @@ def load_main_data(dir: str):
 
     adata.strings_to_categoricals()
 
-    adata = adata[~adata.obs["Qalb"].isna()]
-    adata = adata[[e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]]]
-    adata = adata[(adata.obs[["Erythrocytes"]] == adata.obs[["Erythrocytes"]]).values]
+    adata = adata[~adata.obs["Qalb"].isna()].copy()
+    mask = np.array([e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]])
+    adata = adata[mask]
+    adata = adata[~adata.obs["Erythrocytes"].isna()]
 
     return adata
 
@@ -250,9 +253,10 @@ def load_pilot_data(dir: str):
 
     adata.strings_to_categoricals()
 
-    adata = adata[~adata.obs["Qalb"].isna()]
-    adata = adata[[e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]]]
-    adata = adata[(adata.obs[["Erythrocytes"]] == adata.obs[["Erythrocytes"]]).values]
+    adata = adata[~adata.obs["Qalb"].isna()].copy()
+    mask = np.array([e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]])
+    adata = adata[mask]
+    adata = adata[~adata.obs["Erythrocytes"].isna()]
 
     return adata
 

@@ -1,6 +1,10 @@
 import numpy as np
 import scanpy as sc
 
+from scp.utils import (
+    prepare_anndata_for_R,
+)
+
 
 def impute_downshifted_normal_sample(
     adata,
@@ -235,3 +239,35 @@ def impute_iterative(
     del imputer
 
     return adata.X
+
+
+def run_protDP(adata, layer=None):
+    import anndata2ri
+    from rpy2.robjects import r
+    from rpy2.robjects.vectors import ListVector
+    
+    r_adata = prepare_anndata_for_R(adata)
+
+    anndata2ri.activate()
+    r.assign("r_adata", r_adata)
+
+    r(f"""
+        library(protDP)
+
+        X <- assay(r_adata, "{layer}")
+        dpcfit <- dpc(X)
+        """
+    )
+    dpcFit = r("dpcfit")
+
+    def listvector_to_dict(r_listvector):
+        py_dict = dict(zip(r_listvector.names, map(convert_r_to_python, r_listvector)))
+        return py_dict
+
+    def convert_r_to_python(r_object):
+        if isinstance(r_object, ListVector):
+            return listvector_to_dict(r_object)
+        else:
+            return r_object
+
+    return convert_r_to_python(dpcFit)
