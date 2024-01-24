@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
 
 import scp.metrics as metrics
+
 
 """
     Common plots used in multiple notebooks
@@ -636,3 +639,15 @@ def plot_protein_detection_proportion_panel_protDP(
     _scatter_compare_protein_detection_proportion_difference(
         x_protein, p_protein, p_est, color=color, ax=axes[3]
     )
+
+
+#############################################
+# Generic plots
+#############################################
+    
+def plot_confusion_matrix(y_test, y_pred, labels):
+    cf = confusion_matrix(y_test, y_pred)
+
+    sns.heatmap(cf, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")

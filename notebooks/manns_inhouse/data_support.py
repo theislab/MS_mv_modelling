@@ -4,6 +4,9 @@ import scanpy as sc
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+import sklearn
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
 import scp.utils as utils
 import scp.plots as pl
@@ -139,6 +142,9 @@ def load_main_data(dir: str):
     mask = np.array([e not in ["++", "+++", "bloody"] for e in adata.obs["Erythrocytes"]])
     adata = adata[mask]
     adata = adata[~adata.obs["Erythrocytes"].isna()]
+
+    adata.obs["diagnosis_group_autoimmune"] = adata.obs["Diagnosis_group_autoimmune_split"].replace("Autoimmune_notMSrelated", "Autoimmune").replace("Autoimmune_MSrelated", "Autoimmune")
+    adata.obs["diagnosis_group_autoimmune"] = adata.obs["diagnosis_group_autoimmune"].astype("category")
 
     return adata
 
@@ -318,7 +324,6 @@ def correct_batch(adata):
         std_protein_per_plate = np.nanstd(x, axis=0)
 
         # If only 1 cell exists in the plate, std_protein_per_plate will be 0. So we correct this.
-        # @TODO: would it be better not to do this correction and thereby get more nan's in the data?
         std_protein_per_plate[std_protein_per_plate == 0] = std
 
         adata.X[mask, :] = (
@@ -675,9 +680,7 @@ def scatter_difference_observed_and_missing_by_protein(x_pilot, x_main, x_model)
     ax.set_title("Avg. difference per protein between observed and missing")
 
 
-def plot_diagnostic_groups_umap(adata):
-    adata.obs["diagnosis_group_autoimmune"] = adata.obs["Diagnosis_group_autoimmune_split"].replace("Autoimmune_notMSrelated", "Autoimmune").replace("Autoimmune_MSrelated", "Autoimmune")
-
+def plot_diagnostic_groups_umap(adata, field="X_umap"):
     annotation = "diagnosis_group_autoimmune"
     categories = adata.obs[annotation].unique()
     categories = categories[categories != "Other"]
@@ -697,7 +700,7 @@ def plot_diagnostic_groups_umap(adata):
 
         ax = axes[i // n_cols, i % n_cols]
 
-        umap = adata.obsm["X_umap"][~mask]
+        umap = adata.obsm[field][~mask]
 
         ax.scatter(
             umap[:, 0],
@@ -706,7 +709,7 @@ def plot_diagnostic_groups_umap(adata):
             s=10, 
         )
 
-        umap = adata.obsm["X_umap"][mask]
+        umap = adata.obsm[field][mask]
         ax.scatter(
             umap[:, 0],
             umap[:, 1],
@@ -721,3 +724,22 @@ def plot_diagnostic_groups_umap(adata):
 
     for i in range(n_elements, n_cols * n_rows):
         axes[i // n_cols, i % n_cols].axis("off")
+
+
+
+
+def classify_diagnostic_group(adata, field="X_pca", n_components=10):
+    X = adata.obsm[field]
+    y = adata.obs["Diagnosis_group"].values
+
+    n_components = min(n_components, X.shape[1])
+    X = X[:, :n_components]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+
+    clf = RandomForestClassifier(n_estimators=100, random_state=0)
+    clf.fit(X_train, y_train)
+
+    y_pred = clf.predict(X_test)
+
+    return y_test, y_pred

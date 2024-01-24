@@ -913,6 +913,7 @@ class PROTVI(
         batch_key: Optional[str] = None,
         categorical_covariate_keys: Optional[List[str]] = None,
         continuous_covariate_keys: Optional[List[str]] = None,
+        **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
 
@@ -943,5 +944,5 @@ class PROTVI(
         adata_manager = AnnDataManager(
             fields=anndata_fields, setup_method_args=setup_method_args
         )
-        adata_manager.register_fields(adata)
+        adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)

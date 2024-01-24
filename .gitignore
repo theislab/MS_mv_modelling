@@ -2,6 +2,9 @@
 data/
 results/
 
+# Models
+*.pt
+
 *.pickle
 
 # Byte-compiled / optimized / DLL files
