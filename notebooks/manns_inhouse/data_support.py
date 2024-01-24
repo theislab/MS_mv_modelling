@@ -3,6 +3,7 @@ import numpy as np
 import scanpy as sc
 import os
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 import scp.utils as utils
 import scp.plots as pl
@@ -672,3 +673,51 @@ def scatter_difference_observed_and_missing_by_protein(x_pilot, x_main, x_model)
     ax.set_xlabel("Avg. protein difference in pilot")
     ax.set_ylabel("Avg. protein difference in model")
     ax.set_title("Avg. difference per protein between observed and missing")
+
+
+def plot_diagnostic_groups_umap(adata):
+    adata.obs["diagnosis_group_autoimmune"] = adata.obs["Diagnosis_group_autoimmune_split"].replace("Autoimmune_notMSrelated", "Autoimmune").replace("Autoimmune_MSrelated", "Autoimmune")
+
+    annotation = "diagnosis_group_autoimmune"
+    categories = adata.obs[annotation].unique()
+    categories = categories[categories != "Other"]
+
+    n_elements = len(categories)
+
+    n_cols = 4
+    n_rows = n_elements // n_cols
+    n_rows += 1 if n_elements % n_cols != 0 else 0
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 4, n_rows * 4))
+
+    colors = sns.color_palette("Set1", n_colors=n_elements)
+
+    for i, group in enumerate(categories):
+        mask = adata.obs[annotation] == group
+
+        ax = axes[i // n_cols, i % n_cols]
+
+        umap = adata.obsm["X_umap"][~mask]
+
+        ax.scatter(
+            umap[:, 0],
+            umap[:, 1],
+            c = "lightgrey",
+            s=10, 
+        )
+
+        umap = adata.obsm["X_umap"][mask]
+        ax.scatter(
+            umap[:, 0],
+            umap[:, 1],
+            c = colors[i],
+            s=10, 
+        )
+
+        ax.set_title(group, fontsize=14)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.axis("off")
+
+    for i in range(n_elements, n_cols * n_rows):
+        axes[i // n_cols, i % n_cols].axis("off")
