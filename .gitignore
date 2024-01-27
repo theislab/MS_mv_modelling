@@ -2,6 +2,9 @@
 data/
 results/
 
+*.h5ad
+_*.ipynb
+
 # Models
 *.pt
 
