@@ -421,7 +421,7 @@ class PROTVAE(BaseModuleClass):
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
-        max_p_train_dropout: Tunable[float] = 0.0,
+        max_loss_dropout: Tunable[float] = 0.0,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -431,14 +431,13 @@ class PROTVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.loss_type = loss_type
         self.n_samples = n_samples
-        self.max_p_train_dropout = max_p_train_dropout
+        self.max_loss_dropout = max_loss_dropout
 
-        if loss_type == "elbo":
-            self.loss_fn = self._elbo_loss
-        elif loss_type == "iwae":
-            self.loss_fn = self._iwae_loss
-        else:
-            raise ValueError(f"Unknown loss type: {loss_type}")
+        losses = {
+            "elbo": self._elbo_loss,
+            "iwae": self._iwae_loss,
+        }
+        self.loss_fn = losses[loss_type]
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -463,45 +462,25 @@ class PROTVAE(BaseModuleClass):
             return_dist=True,
         )
 
-        n_input_decoder = n_latent + n_continuous_cov
+        modules = {
+            "selection": SelectionDecoderPROTVI,
+            "conjunction": ConjunctionDecoderPROTVI,
+            "hybrid": HybridDecoderPROTVI,
+        }
+        module = modules[decoder_type]
 
-        # @TODO: if these have the same class signature, can we just pass the class?
-        if decoder_type == "selection":
-            self.decoder = SelectionDecoderPROTVI(
-                n_input=n_input_decoder,
-                n_output=n_input,
-                n_cat_list=cat_list,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                inject_covariates=deeply_inject_covariates,
-                use_batch_norm=use_batch_norm_decoder,
-                use_layer_norm=use_layer_norm_decoder,
-                x_variance=x_variance,
-            )
-        elif decoder_type == "conjunction":
-            self.decoder = ConjunctionDecoderPROTVI(
-                n_input=n_input_decoder,
-                n_output=n_input,
-                n_cat_list=cat_list,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                x_variance=x_variance,
-                inject_covariates=deeply_inject_covariates,
-                use_batch_norm=use_batch_norm_decoder,
-                use_layer_norm=use_layer_norm_decoder,
-            )
-        elif decoder_type == "hybrid":
-            self.decoder = HybridDecoderPROTVI(
-                n_input=n_input_decoder,
-                n_output=n_input,
-                n_cat_list=cat_list,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
-                x_variance=x_variance,
-                inject_covariates=deeply_inject_covariates,
-                use_batch_norm=use_batch_norm_decoder,
-                use_layer_norm=use_layer_norm_decoder,
-            )
+        n_input_decoder = n_latent + n_continuous_cov
+        self.decoder = module(
+            n_input=n_input_decoder,
+            n_output=n_input,
+            n_cat_list=cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            x_variance=x_variance,
+            inject_covariates=deeply_inject_covariates,
+            use_batch_norm=use_batch_norm_decoder,
+            use_layer_norm=use_layer_norm_decoder,
+        )
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -590,7 +569,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-        use_x_mix=True,
+        use_x_mix=False,
     ):
         """Runs the generative model."""
 
@@ -672,7 +651,7 @@ class PROTVAE(BaseModuleClass):
         distributions = self._get_distributions(inference_outputs, generative_outputs)
 
         mask = (x != 0).type(torch.float32)
-        scoring_mask = self._get_scoring_mask(mask, max_p_train_dropout=self.max_p_train_dropout)
+        scoring_mask = self._get_scoring_mask(mask, max_loss_dropout=self.max_loss_dropout)
 
         return self.loss_fn(
             x=x,
@@ -684,9 +663,9 @@ class PROTVAE(BaseModuleClass):
             mechanism_weight=mechanism_weight,
         )
 
-    def _get_scoring_mask(self, mask, max_p_train_dropout: float):
-        # each cell has a different dropout probability with max: max_p_train_dropout
-        p_missing = torch.rand(mask.shape[0], 1) * max_p_train_dropout 
+    def _get_scoring_mask(self, mask, max_loss_dropout: float):
+        # each cell has a different dropout probability with max: max_loss_dropout
+        p_missing = torch.rand(mask.shape[0], 1) * max_loss_dropout 
         scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
         return scoring_mask
 
@@ -917,7 +896,7 @@ class PROTVI(
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
-        max_p_train_dropout: Tunable[float] = 0.0,
+        max_loss_dropout: Tunable[float] = 0.0,
     ):
         super().__init__(adata)
 
@@ -945,7 +924,7 @@ class PROTVI(
             decoder_type=decoder_type,
             loss_type=loss_type,
             n_samples=n_samples,
-            max_p_train_dropout=max_p_train_dropout,
+            max_loss_dropout=max_loss_dropout,
         )
 
         self._model_summary_string = (
