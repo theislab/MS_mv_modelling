@@ -421,7 +421,7 @@ class PROTVAE(BaseModuleClass):
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
-        max_p_train_dropoout: Tunable[float] = 0.0,
+        max_p_train_dropout: Tunable[float] = 0.0,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -431,7 +431,7 @@ class PROTVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.loss_type = loss_type
         self.n_samples = n_samples
-        self.max_p_train_dropoout = max_p_train_dropoout
+        self.max_p_train_dropout = max_p_train_dropout
 
         if loss_type == "elbo":
             self.loss_fn = self._elbo_loss
@@ -672,7 +672,7 @@ class PROTVAE(BaseModuleClass):
         distributions = self._get_distributions(inference_outputs, generative_outputs)
 
         mask = (x != 0).type(torch.float32)
-        scoring_mask = self._get_scoring_mask(mask, max_p_train_dropoout=self.max_p_train_dropoout)
+        scoring_mask = self._get_scoring_mask(mask, max_p_train_dropout=self.max_p_train_dropout)
 
         return self.loss_fn(
             x=x,
@@ -684,9 +684,9 @@ class PROTVAE(BaseModuleClass):
             mechanism_weight=mechanism_weight,
         )
 
-    def _get_scoring_mask(self, mask, max_p_train_dropoout: float):
-        # each cell has a different dropout probability with max: max_p_train_dropoout
-        p_missing = torch.rand(mask.shape[0], 1) * max_p_train_dropoout 
+    def _get_scoring_mask(self, mask, max_p_train_dropout: float):
+        # each cell has a different dropout probability with max: max_p_train_dropout
+        p_missing = torch.rand(mask.shape[0], 1) * max_p_train_dropout 
         scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
         return scoring_mask
 
@@ -776,6 +776,7 @@ class ProteinMixin:
         n_samples: Optional[int] = None,
         batch_size: int = 32,
         loss_type: Optional[Literal["elbo", "iwae"]] = None,
+        replace_with_obs: bool = False,
     ):
         """
         Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
@@ -791,6 +792,12 @@ class ProteinMixin:
 
         batch_size
             Batch size to use for imputation
+
+        loss_type
+            Loss type to use for imputation
+        
+        replace_with_obs
+            Whether to replace the imptuated values with the observed values
 
         Returns
         -------
@@ -817,7 +824,7 @@ class ProteinMixin:
         ps_list = []
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
-            generative_kwargs = {}
+            generative_kwargs = { "use_x_mix": replace_with_obs }
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
                 compute_loss=False,
@@ -856,6 +863,11 @@ class ProteinMixin:
 
         xs = np.concatenate(xs_list, axis=0)
         ps = np.concatenate(ps_list, axis=0)
+
+        if replace_with_obs:
+            x_data = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+            m = x_data != 0
+            xs = x_data * m + xs * ~m
 
         return xs, ps
 
@@ -905,7 +917,7 @@ class PROTVI(
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
-        max_p_train_dropoout: Tunable[float] = 0.0,
+        max_p_train_dropout: Tunable[float] = 0.0,
     ):
         super().__init__(adata)
 
@@ -933,7 +945,7 @@ class PROTVI(
             decoder_type=decoder_type,
             loss_type=loss_type,
             n_samples=n_samples,
-            max_p_train_dropoout=max_p_train_dropoout,
+            max_p_train_dropout=max_p_train_dropout,
         )
 
         self._model_summary_string = (
