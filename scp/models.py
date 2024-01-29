@@ -132,7 +132,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -215,7 +215,7 @@ class HybridDecoderPROTVI(nn.Module):
         self.x_p = GlobalLinear(n_output)
         self.z_p = nn.Linear(n_hidden, 1)
 
-    def forward(self, z: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -246,9 +246,16 @@ class HybridDecoderPROTVI(nn.Module):
 
         x_var = torch.exp(x_var)
 
+        # x_mix
+        if x_data is None:
+            x_mix = x_mean
+        else:
+            m = x_data != 0
+            x_mix = x_data * m + x_mean * ~m
+
         # z -> p, x -> p
         z_p = self.z_p(h)
-        x_p = self.x_p(x_mean)
+        x_p = self.x_p(x_mix)
 
         m_prob = torch.sigmoid(z_p + x_p)
 
@@ -298,7 +305,7 @@ class SelectionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -328,7 +335,15 @@ class SelectionDecoderPROTVI(nn.Module):
             x_var = self.x_var.expand(x_mean.shape)
 
         x_var = torch.exp(x_var)
-        m_prob = self.m_prob_decoder(x_mean)
+
+        # x_mix
+        if x_data is None:
+            x_mix = x_mean
+        else:
+            m = x_data != 0
+            x_mix = x_data * m + x_mean * ~m
+
+        m_prob = self.m_prob_decoder(x_mix)
 
         return x_mean, x_var, m_prob
 
@@ -406,6 +421,7 @@ class PROTVAE(BaseModuleClass):
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
+        max_p_train_dropoout: Tunable[float] = 0.0,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -415,6 +431,7 @@ class PROTVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.loss_type = loss_type
         self.n_samples = n_samples
+        self.max_p_train_dropoout = max_p_train_dropoout
 
         if loss_type == "elbo":
             self.loss_fn = self._elbo_loss
@@ -573,6 +590,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
+        use_x_mix=True,
     ):
         """Runs the generative model."""
 
@@ -603,8 +621,11 @@ class PROTVAE(BaseModuleClass):
             # (n_samples, n_batch, n_input) -> (n_samples * n_batch, n_input)
             decoder_input = z.view(packed_shape)
 
+        # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
+        x_obs = x.repeat(n_samples, 1) if use_x_mix else None
+
         x_mean, x_var, m_prob = self.decoder(
-            decoder_input, batch_index, *categorical_input
+            decoder_input, x_obs, batch_index, *categorical_input
         )
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
@@ -650,17 +671,31 @@ class PROTVAE(BaseModuleClass):
 
         distributions = self._get_distributions(inference_outputs, generative_outputs)
 
+        mask = (x != 0).type(torch.float32)
+        scoring_mask = self._get_scoring_mask(mask, max_p_train_dropoout=self.max_p_train_dropoout)
+
         return self.loss_fn(
             x=x,
             z=z,
+            mask=mask,
+            scoring_mask=scoring_mask,
             **distributions,
             kl_weight=kl_weight,
             mechanism_weight=mechanism_weight,
         )
 
+    def _get_scoring_mask(self, mask, max_p_train_dropoout: float):
+        # each cell has a different dropout probability with max: max_p_train_dropoout
+        p_missing = torch.rand(mask.shape[0], 1) * max_p_train_dropoout 
+        scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
+        return scoring_mask
+
+
     def _elbo_loss(
         self,
         x,
+        mask,
+        scoring_mask,
         qz,
         pz,
         px,
@@ -669,14 +704,14 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ):
-        ## reconstruction loss
-        m_obs = x != 0
 
-        lpx = m_obs * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(m_obs.type(torch.float32))
+        lpx = mask * px.log_prob(x)
+        lpm = mechanism_weight * pm.log_prob(mask)
+
+        ll = scoring_mask * (lpx + lpm)
 
         # average over samples, (n_samples, n_batch, n_input) -> (n_batch, n_input)
-        lpd = torch.mean(lpx + lpm, dim=0)
+        lpd = torch.mean(ll, dim=0)
 
         # sum over features: (n_batch, n_input) -> (n_batch,)
         reconstruction_loss = -torch.sum(lpd, dim=-1)
@@ -693,17 +728,17 @@ class PROTVAE(BaseModuleClass):
             loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
         )
 
-    def _get_importance_weights(self, x, z, qz, pz, px, pm, mechanism_weight=1.0):
-        m_obs = x != 0
-
+    def _get_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
         # sum over features: (n_samples, n_batch, n_input) -> (n_samples, n_batch)
-        lpx = (m_obs * px.log_prob(x)).sum(dim=-1)
-        lpm = mechanism_weight * pm.log_prob(m_obs.type(torch.float32)).sum(dim=-1)
+        lpx = (mask * px.log_prob(x)).sum(dim=-1)
+        lpm = mechanism_weight * pm.log_prob(mask).sum(dim=-1)
+
+        ll = scoring_mask * (lpx + lpm)
 
         lpz = pz.log_prob(z).sum(dim=-1)
         lqz = qz.log_prob(z).sum(dim=-1)
 
-        lw = lpx + lpm + lpz - lqz
+        lw = ll + lpz - lqz
 
         return lw
 
@@ -870,6 +905,7 @@ class PROTVI(
         ] = "selection",
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
+        max_p_train_dropoout: Tunable[float] = 0.0,
     ):
         super().__init__(adata)
 
@@ -897,6 +933,7 @@ class PROTVI(
             decoder_type=decoder_type,
             loss_type=loss_type,
             n_samples=n_samples,
+            max_p_train_dropoout=max_p_train_dropoout,
         )
 
         self._model_summary_string = (
