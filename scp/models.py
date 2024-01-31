@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import nn as nn
 from torch.distributions import Normal, Bernoulli
-from torch.distributions import kl_divergence as kl
+from torch.distributions import kl_divergence
 
 from scvi import REGISTRY_KEYS
 from scvi.autotune._types import Tunable
@@ -358,6 +358,11 @@ class SelectionDecoderPROTVI(nn.Module):
 
 
 ## module
+
+PRIOR_CAT_COVS_KEY = "prior_categorical_covs"
+PRIOR_CONT_COVS_KEY = "prior_continuous_covs"
+
+
 class PROTVAE(BaseModuleClass):
     """Variational auto-encoder for proteomics data.
 
@@ -396,6 +401,27 @@ class PROTVAE(BaseModuleClass):
     var_activation
         Callable used to ensure positivity of the variational distributions' variance.
         When `None`, defaults to `torch.exp`.
+    decoder_type
+        One of
+
+        * ``'selection'`` - Selection decoder
+        * ``'conjunction'`` - Conjunction decoder
+        * ``'hybrid'`` - Hybrid decoder
+
+    loss_type
+        One of
+
+        * ``'elbo'`` - Evidence lower bound
+        * ``'iwae'`` - Importance weighted autoencoder
+
+    n_samples
+        Number of samples to use for importance weighted autoencoder loss.
+    max_loss_dropout
+        Maximum fraction of features to use when computing the loss. This acts as a dropout mask.
+    n_prior_continuous_cov
+        Number of continuous covariates for the prior.
+    n_prior_cats_per_cov
+        Number of categories for each extra categorical covariate for the prior.
     """
 
     def __init__(
@@ -422,6 +448,8 @@ class PROTVAE(BaseModuleClass):
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        n_prior_continuous_cov: int = 0,
+        n_prior_cats_per_cov: Optional[Iterable[int]] = None,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -444,6 +472,7 @@ class PROTVAE(BaseModuleClass):
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
         use_layer_norm_decoder = use_layer_norm == "decoder" or use_layer_norm == "both"
 
+        ## Encoder
         n_input_encoder = n_input + n_continuous_cov * encode_covariates
         cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
         encoder_cat_list = cat_list if encode_covariates else None
@@ -462,6 +491,7 @@ class PROTVAE(BaseModuleClass):
             return_dist=True,
         )
 
+        ## Decoder
         modules = {
             "selection": SelectionDecoderPROTVI,
             "conjunction": ConjunctionDecoderPROTVI,
@@ -481,6 +511,24 @@ class PROTVAE(BaseModuleClass):
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
         )
+        
+        ## Latent prior encoder
+        n_input_prior_encoder = n_prior_continuous_cov
+        cat_list = list([] if n_prior_cats_per_cov is None else n_prior_cats_per_cov)
+        self.prior_encoder = Encoder(
+            n_input=n_input_prior_encoder,
+            n_output=n_latent,
+            n_cat_list=cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            distribution=latent_distribution,
+            inject_covariates=True,
+            use_batch_norm=use_batch_norm_encoder,
+            use_layer_norm=use_layer_norm_encoder,
+            var_activation=var_activation,
+            return_dist=True,
+        )
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -493,11 +541,23 @@ class PROTVAE(BaseModuleClass):
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
+        prior_cont_key = PRIOR_CONT_COVS_KEY
+        prior_cont_covs = (
+            tensors[prior_cont_key] if prior_cont_key in tensors.keys() else None
+        )
+
+        prior_cat_key = PRIOR_CAT_COVS_KEY
+        prior_cat_covs = (
+            tensors[prior_cat_key] if prior_cat_key in tensors.keys() else None
+        )
+
         return {
             "x": x,
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
+            "prior_cont_covs": prior_cont_covs,
+            "prior_cat_covs": prior_cat_covs,
         }
 
     @auto_move_data
@@ -507,6 +567,8 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
+        prior_cont_covs=None,
+        prior_cat_covs=None,
         n_samples=None,
     ):
         """High level inference method.
@@ -514,6 +576,23 @@ class PROTVAE(BaseModuleClass):
         Runs the inference (encoder) model.
         """
 
+        ## latent prior
+        if prior_cont_covs is not None:
+            prior_continous_input = prior_cont_covs
+        else:
+            prior_continous_input = torch.empty(0)
+        
+        if prior_cat_covs is not None:
+            prior_categorical_input = torch.split(prior_cat_covs, 1, dim=1)
+        else:
+            prior_categorical_input = ()
+
+        if (prior_cont_covs is not None) or (prior_cat_covs is not None):
+            pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
+        else:
+            pz = Normal(loc=0.0, scale=1.0)
+
+        ## latent posterior
         if n_samples is None:
             n_samples = self.n_samples
 
@@ -530,13 +609,13 @@ class PROTVAE(BaseModuleClass):
         else:
             categorical_input = ()
 
-        # @TODO: create protvi encoder
         qz, _ = self.encoder(encoder_input, batch_index, *categorical_input)
 
         # shape: (n_samples, n_batch, n_latent)
         z = qz.rsample(torch.Size([n_samples]))
 
         return {
+            "pz": pz,
             "qz": qz,
             "z": z,
         }
@@ -620,14 +699,14 @@ class PROTVAE(BaseModuleClass):
 
     def _get_distributions(self, inference_outputs, generative_outputs):
         qz = inference_outputs["qz"]
-        pz = Normal(loc=0.0, scale=1.0)
+        pz = inference_outputs["pz"]
 
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
 
-        px = Normal(x_mean, torch.sqrt(x_var))
-        pm = Bernoulli(m_prob)
+        px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
+        pm = Bernoulli(probs=m_prob)
 
         return {
             "qz": qz,
@@ -666,7 +745,8 @@ class PROTVAE(BaseModuleClass):
         )
 
     def _get_scoring_mask(self, mask, max_loss_dropout: float):
-        # each cell has a different dropout probability with max: max_loss_dropout
+        # the scoring mask acts as a dropout mask when computing the loss of the reconstructed features
+        # In each sample a fraction of the features are used to compute the loss
         p_missing = torch.rand(mask.shape[0], 1) * max_loss_dropout
         scoring_mask = (
             torch.bernoulli(1.0 - p_missing.expand_as(mask))
@@ -694,21 +774,21 @@ class PROTVAE(BaseModuleClass):
         ll = scoring_mask * (lpx + lpm)
 
         # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
-        lpd = torch.mean(ll, dim=0)
+        lpd = ll.sum(dim=0)
 
         # sum over features: (n_batch, n_features) -> (n_batch,)
-        reconstruction_loss = -torch.sum(lpd, dim=-1)
+        reconstruction_loss = -lpd.sum(dim=-1)
 
         ## KL
         # (n_batch, n_latent) -> (n_batch,)
-        kl_divergence = kl(qz, pz).sum(dim=-1)
-        weighted_kl = kl_divergence * kl_weight
+        kl = kl_divergence(qz, pz).sum(dim=-1)
+        weighted_kl = kl * kl_weight
 
         ## ELBO
-        loss = torch.mean(reconstruction_loss + weighted_kl)
+        loss = (reconstruction_loss + weighted_kl).mean()
 
         return LossOutput(
-            loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
+            loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl
         )
 
     def _get_importance_weights(
@@ -746,9 +826,9 @@ class PROTVAE(BaseModuleClass):
         )
 
         # sum over samples: (n_samples, n_batch) -> (n_batch,)
-        lw_sum = torch.logsumexp(lw, dim=0) - np.log(lw.size(0))
+        lw_sum = lw.logsumexp(dim=0) - np.log(lw.size(0))
 
-        loss = -torch.mean(lw_sum)
+        loss = -lw_sum.mean()
 
         return LossOutput(loss=loss, n_obs_minibatch=x.size(0))
 
@@ -834,11 +914,12 @@ class ProteinMixin:
                 )
                 x = tensors[REGISTRY_KEYS.X_KEY]
                 mask = (x != 0).type(torch.float32)
+                scoring_mask = mask
                 lw = self.module._get_importance_weights(
                     x,
                     inference_outputs["z"],
                     mask,
-                    mask,
+                    scoring_mask,
                     **distributions,
                 )
                 lw = lw.cpu().numpy()
@@ -911,6 +992,7 @@ class PROTVI(
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        **model_kwargs,
     ):
         super().__init__(adata)
 
@@ -922,6 +1004,13 @@ class PROTVI(
             else None
         )
         n_batch = self.summary_stats.n_batch
+
+        n_prior_cats_per_cov = (
+            self.adata_manager.get_state_registry(
+                PRIOR_CAT_COVS_KEY
+            ).n_cats_per_key
+            if PRIOR_CAT_COVS_KEY in self.adata_manager.data_registry
+            else None)
 
         self.module = PROTVAE(
             n_input=self.summary_stats.n_vars,
@@ -939,6 +1028,9 @@ class PROTVI(
             loss_type=loss_type,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
+            n_prior_continuous_cov=self.summary_stats.get("n_prior_continuous_covs", 0),
+            n_prior_cats_per_cov=n_prior_cats_per_cov,
+            **model_kwargs,
         )
 
         self._model_summary_string = (
@@ -955,6 +1047,8 @@ class PROTVI(
         batch_key: Optional[str] = None,
         categorical_covariate_keys: Optional[List[str]] = None,
         continuous_covariate_keys: Optional[List[str]] = None,
+        prior_continuous_covariate_keys: Optional[List[str]] = None,
+        prior_categorical_covariate_keys: Optional[List[str]] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -971,6 +1065,10 @@ class PROTVI(
             List of keys in ``adata.obs`` for categorical covariates.
         continuous_covariate_keys
             List of keys in ``adata.obs`` for continuous covariates.
+        prior_categorical_covariate_keys
+            List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
+        prior_continuous_covariate_keys
+            List of keys in ``adata.obs`` for prior continuous covariates.
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
@@ -981,6 +1079,12 @@ class PROTVI(
             ),
             NumericalJointObsField(
                 REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
+            ),
+            CategoricalJointObsField(
+                PRIOR_CAT_COVS_KEY, prior_categorical_covariate_keys
+            ),
+            NumericalJointObsField(
+                PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys
             ),
         ]
         adata_manager = AnnDataManager(
