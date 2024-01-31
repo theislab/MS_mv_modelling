@@ -651,7 +651,9 @@ class PROTVAE(BaseModuleClass):
         distributions = self._get_distributions(inference_outputs, generative_outputs)
 
         mask = (x != 0).type(torch.float32)
-        scoring_mask = self._get_scoring_mask(mask, max_loss_dropout=self.max_loss_dropout)
+        scoring_mask = self._get_scoring_mask(
+            mask, max_loss_dropout=self.max_loss_dropout
+        )
 
         return self.loss_fn(
             x=x,
@@ -665,10 +667,13 @@ class PROTVAE(BaseModuleClass):
 
     def _get_scoring_mask(self, mask, max_loss_dropout: float):
         # each cell has a different dropout probability with max: max_loss_dropout
-        p_missing = torch.rand(mask.shape[0], 1) * max_loss_dropout 
-        scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
+        p_missing = torch.rand(mask.shape[0], 1) * max_loss_dropout
+        scoring_mask = (
+            torch.bernoulli(1.0 - p_missing.expand_as(mask))
+            .to(mask.dtype)
+            .to(mask.device)
+        )
         return scoring_mask
-
 
     def _elbo_loss(
         self,
@@ -683,16 +688,15 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ):
-
         lpx = mask * px.log_prob(x)
         lpm = mechanism_weight * pm.log_prob(mask)
 
         ll = scoring_mask * (lpx + lpm)
 
-        # average over samples, (n_samples, n_batch, n_input) -> (n_batch, n_input)
+        # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
         lpd = torch.mean(ll, dim=0)
 
-        # sum over features: (n_batch, n_input) -> (n_batch,)
+        # sum over features: (n_batch, n_features) -> (n_batch,)
         reconstruction_loss = -torch.sum(lpd, dim=-1)
 
         ## KL
@@ -707,13 +711,16 @@ class PROTVAE(BaseModuleClass):
             loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl_divergence
         )
 
-    def _get_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
-        # sum over features: (n_samples, n_batch, n_input) -> (n_samples, n_batch)
-        lpx = (mask * px.log_prob(x)).sum(dim=-1)
-        lpm = mechanism_weight * pm.log_prob(mask).sum(dim=-1)
+    def _get_importance_weights(
+        self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0
+    ):
+        lpx = mask * px.log_prob(x)
+        lpm = mechanism_weight * pm.log_prob(mask)
 
         ll = scoring_mask * (lpx + lpm)
 
+        # sum over features: (n_samples, n_batch, n_features) -> (n_samples, n_batch)
+        ll = ll.sum(dim=-1)
         lpz = pz.log_prob(z).sum(dim=-1)
         lqz = qz.log_prob(z).sum(dim=-1)
 
@@ -725,6 +732,8 @@ class PROTVAE(BaseModuleClass):
         self,
         x,
         z,
+        mask,
+        scoring_mask,
         qz,
         pz,
         px,
@@ -732,7 +741,9 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ):
-        lw = self._get_importance_weights(x, z, qz, pz, px, pm, mechanism_weight)
+        lw = self._get_importance_weights(
+            x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight
+        )
 
         # sum over samples: (n_samples, n_batch) -> (n_batch,)
         lw_sum = torch.logsumexp(lw, dim=0) - np.log(lw.size(0))
@@ -774,7 +785,7 @@ class ProteinMixin:
 
         loss_type
             Loss type to use for imputation
-        
+
         replace_with_obs
             Whether to replace the imptuated values with the observed values
 
@@ -803,7 +814,7 @@ class ProteinMixin:
         ps_list = []
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
-            generative_kwargs = { "use_x_mix": replace_with_obs }
+            generative_kwargs = {"use_x_mix": replace_with_obs}
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
                 compute_loss=False,
@@ -821,10 +832,13 @@ class ProteinMixin:
                 distributions = self.module._get_distributions(
                     inference_outputs, generative_outputs
                 )
-
+                x = tensors[REGISTRY_KEYS.X_KEY]
+                mask = (x != 0).type(torch.float32)
                 lw = self.module._get_importance_weights(
-                    tensors[REGISTRY_KEYS.X_KEY],
+                    x,
                     inference_outputs["z"],
+                    mask,
+                    mask,
                     **distributions,
                 )
                 lw = lw.cpu().numpy()
