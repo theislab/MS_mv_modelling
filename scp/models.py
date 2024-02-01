@@ -832,7 +832,7 @@ class ProteinMixin:
                 distributions = self.module._get_distributions(
                     inference_outputs, generative_outputs
                 )
-                x = tensors[REGISTRY_KEYS.X_KEY]
+                x = tensors[REGISTRY_KEYS.X_KEY].to(inference_outputs["z"].device)
                 mask = (x != 0).type(torch.float32)
                 lw = self.module._get_importance_weights(
                     x,
