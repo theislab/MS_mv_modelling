@@ -126,8 +126,8 @@ def prepare_anndata_for_R(adata):
 
     for column in adata.obs.columns:
         if pd.api.types.is_categorical_dtype(adata.obs[column]):
-            adata.obs.drop(column, axis=1, inplace=True)
-            # adata.obs[column] = adata.obs[column].astype(str)
+            #adata.obs.drop(column, axis=1, inplace=True)
+            adata.obs[column] = adata.obs[column].astype(str)
 
     return adata
 
