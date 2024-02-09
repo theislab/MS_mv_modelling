@@ -16,7 +16,7 @@ import scp.metrics as metrics
 
 
 def plot_loss(history, epoch_start=0, validation_smooth_window=None, pad=3):
-    fig, axes = plt.subplots(figsize=(16, 4), ncols=3, nrows=1)
+    fig, axes = plt.subplots(figsize=(10, 3), ncols=3, nrows=1)
     fig.tight_layout(pad=pad)
 
     def _plot(key, color, ax):
@@ -81,17 +81,23 @@ def plot_loss(history, epoch_start=0, validation_smooth_window=None, pad=3):
 
 def scatter_protein_detection_proportion_and_intensity(x, title=None, ax=None):
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(4, 3))
 
     x_obs_protein = np.nanmean(x, axis=0)
     p_protein = 1 - np.mean(np.isnan(x), axis=0)
 
-    ax.scatter(x_obs_protein, p_protein, color="blue", alpha=.3, s=4)
+    ax.scatter(x_obs_protein, p_protein, color="b", alpha=.15, s=3)
     ax.set_title(title)
     ax.set_xlabel("protein log-intensity")
     ax.set_ylabel("detection proportion")
-    ax.grid(True)
+    ax.grid(True, color='lightgray')
     ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    ax.spines['bottom'].set_color('gray')
+    ax.spines['left'].set_color('gray')
+    
 
 
 def scatter_sample_mean_and_variance(x, title=None, ax=None):

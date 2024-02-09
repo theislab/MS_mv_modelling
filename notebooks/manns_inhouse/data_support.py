@@ -146,6 +146,8 @@ def load_main_data(dir: str):
     adata.obs["diagnosis_group_autoimmune"] = adata.obs["Diagnosis_group_autoimmune_split"].replace("Autoimmune_notMSrelated", "Autoimmune").replace("Autoimmune_MSrelated", "Autoimmune")
     adata.obs["diagnosis_group_autoimmune"] = adata.obs["diagnosis_group_autoimmune"].astype("category")
 
+    adata.obs["Preparation day"] = [f"day{int(x[-1])}" for x in adata.obs["Preparation day"]]
+
     return adata
 
 
