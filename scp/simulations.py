@@ -1,6 +1,8 @@
 import numpy as np
 import scanpy as sc
 import pandas as pd
+from scipy.stats import norm
+from scipy.interpolate import interp1d
 
 #################################################
 # Reproducibility
@@ -201,3 +203,62 @@ def create_dataset(intensities, detection_probabilities, mask):
     adata.layers["detected"] = mask == 1
 
     return adata
+
+
+def create_mcar_mask2(dim, success_prob, seed=0):
+    rng = np.random.default_rng(seed)
+    return rng.binomial(1, success_prob, dim)
+
+
+def add_train_test_set(adata, train_mask, layer=None):
+    x = adata.layers[layer] if layer is not None else adata.X
+
+    train_mask = train_mask.astype(bool)
+
+    adata.layers["train"] = x.copy()
+    adata.layers["train"][~train_mask] = np.nan
+
+    adata.layers["test"] = x.copy()
+    adata.layers["test"][train_mask] = np.nan
+
+
+def create_mnar_mcar_mask(mv_rate, mnar_proportion, x, seed=None):
+    """
+    Create a mask for missing values that are MNAR and MCAR.
+
+    Parameters
+    ----------
+    mv_rate : float
+        The proportion of missing values in the dataset.
+
+    mnar_proportion : float
+        The proportion of missing values that are MNAR.
+    
+    """
+
+    if seed is not None:
+        np.random.seed(seed)
+
+
+    # MNAR
+    def expected_mask_sum(xx, mu, sd):
+        return 1 - np.nanmean(norm.cdf(xx, loc=mu, scale=sd))
+    
+    sd = np.nanstd(x) / 2
+
+    q_low = np.nanquantile(x, q=mv_rate * 0.0001)
+    q_high = np.nanquantile(x, q=mv_rate)
+    qs = np.linspace(q_low, q_high, num=50)
+    expec_sum_m = [expected_mask_sum(x[~np.isnan(x)], q, sd) for q in qs]
+    inv_mnar_curve = interp1d(expec_sum_m, qs)
+
+    p = np.clip(mnar_proportion * mv_rate, inv_mnar_curve.x[0], inv_mnar_curve.x[-1])
+    q = inv_mnar_curve(p)
+    threshold = np.random.normal(q, sd, size=x.shape)
+    m_mnar = x < threshold
+
+    # MCAR
+    p_mcar = mv_rate * (1 - mnar_proportion) / (1 - mv_rate * mnar_proportion)
+    m_mcar = np.random.binomial(1, p_mcar, size=x.shape).astype(bool)
+
+    return m_mnar, m_mcar
