@@ -571,7 +571,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-        use_x_mix=False if self.use_x_mix is None else True,
+        use_x_mix=self.use_x_mix,
     ):
         """Runs the generative model."""
 
