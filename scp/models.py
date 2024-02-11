@@ -422,6 +422,7 @@ class PROTVAE(BaseModuleClass):
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        use_x_mix=False,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -432,6 +433,7 @@ class PROTVAE(BaseModuleClass):
         self.loss_type = loss_type
         self.n_samples = n_samples
         self.max_loss_dropout = max_loss_dropout
+        self.use_x_mix=use_x_mix
 
         losses = {
             "elbo": self._elbo_loss,
@@ -569,7 +571,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-        use_x_mix=False,
+        use_x_mix=False if self.use_x_mix is None else True,
     ):
         """Runs the generative model."""
 
@@ -911,6 +913,7 @@ class PROTVI(
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        use_x_mix=False,
     ):
         super().__init__(adata)
 
@@ -939,6 +942,7 @@ class PROTVI(
             loss_type=loss_type,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
+            use_x_mix=use_x_mix,
         )
 
         self._model_summary_string = (
