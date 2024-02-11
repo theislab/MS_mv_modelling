@@ -571,11 +571,12 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
-        use_x_mix=self.use_x_mix,
+        use_x_mix=False,
     ):
         """Runs the generative model."""
 
         n_samples, n_batch = z.size(0), z.size(1)
+        use_x_mix=use_x_mix if self.use_x_mix is not None else self.use_x_mix
 
         packed_shape = (n_samples * n_batch, -1)
         unpacked_shape = (n_samples, n_batch, -1)
@@ -690,10 +691,19 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ):
-        lpx = mask * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(mask)
+        # lpx = mask * px.log_prob(x)
+        # lpm = mechanism_weight * pm.log_prob(mask)
 
-        ll = scoring_mask * (lpx + lpm)
+        # ll = scoring_mask * (lpx + lpm)
+
+        lpx = scoring_mask * px.log_prob(x)
+        lpm = pm.log_prob(scoring_mask)
+
+        ll = lpx +  mechanism_weight * lpm
+
+
+
+        
 
         # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
         lpd = torch.mean(ll, dim=0)
