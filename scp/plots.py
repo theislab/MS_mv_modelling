@@ -657,3 +657,27 @@ def plot_confusion_matrix(y_test, y_pred, labels):
     sns.heatmap(cf, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
     plt.xlabel("Predicted")
     plt.ylabel("True")
+
+
+#############################################
+# Simulation plots
+#############################################
+
+def plot_mnar_ratio(adata, m_mnar):
+    bins = np.linspace(np.nanmin(adata.X), np.nanmax(adata.X), num=30)
+
+    x1 = adata.X[m_mnar]
+    hist1, edges1 = np.histogram(x1, bins=bins)
+
+    x2 = adata.X[~np.isnan(adata.X)]
+    hist2, _ = np.histogram(x2, bins=bins)
+
+    normalized = hist1 / hist2
+
+    fig, ax = plt.subplots()
+    ax.bar(edges1[:-1], normalized, width=np.diff(edges1), align="edge", edgecolor="black")
+    ax.set_xlabel("Protein expression")
+    ax.set_ylabel("MNAR / observed")
+    ax.set_title("MNAR / observed ratio")
+    ax.grid(True)
+    ax.set_axisbelow(True)

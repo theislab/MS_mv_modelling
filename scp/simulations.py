@@ -205,10 +205,6 @@ def create_dataset(intensities, detection_probabilities, mask):
     return adata
 
 
-def create_mcar_mask2(dim, success_prob, seed=0):
-    rng = np.random.default_rng(seed)
-    return rng.binomial(1, success_prob, dim)
-
 
 def add_train_test_set(adata, train_mask, layer=None):
     x = adata.layers[layer] if layer is not None else adata.X
