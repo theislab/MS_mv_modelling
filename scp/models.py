@@ -691,15 +691,15 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ):
-        # lpx = mask * px.log_prob(x)
-        # lpm = mechanism_weight * pm.log_prob(mask)
+        lpx = mask * px.log_prob(x)
+        lpm = mechanism_weight * pm.log_prob(mask)
 
-        # ll = scoring_mask * (lpx + lpm)
+        ll = scoring_mask * (lpx + lpm)
 
-        lpx = scoring_mask * px.log_prob(x)
-        lpm = pm.log_prob(scoring_mask)
+        # lpx = scoring_mask * px.log_prob(x)
+        # lpm = pm.log_prob(scoring_mask)
 
-        ll = lpx +  mechanism_weight * lpm
+        # ll = lpx +  mechanism_weight * lpm
 
 
 
