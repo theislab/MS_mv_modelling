@@ -448,6 +448,7 @@ class PROTVAE(BaseModuleClass):
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        use_x_mix=False,
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Optional[Iterable[int]] = None,
     ):
@@ -460,6 +461,7 @@ class PROTVAE(BaseModuleClass):
         self.loss_type = loss_type
         self.n_samples = n_samples
         self.max_loss_dropout = max_loss_dropout
+        self.use_x_mix=use_x_mix
 
         losses = {
             "elbo": self._elbo_loss,
@@ -653,6 +655,7 @@ class PROTVAE(BaseModuleClass):
         """Runs the generative model."""
 
         n_samples, n_batch = z.size(0), z.size(1)
+        use_x_mix=use_x_mix if self.use_x_mix is not None else self.use_x_mix
 
         packed_shape = (n_samples * n_batch, -1)
         unpacked_shape = (n_samples, n_batch, -1)
@@ -772,6 +775,15 @@ class PROTVAE(BaseModuleClass):
         lpm = mechanism_weight * pm.log_prob(mask)
 
         ll = scoring_mask * (lpx + lpm)
+
+
+        # # GINA-like loss ------
+        # lpx = scoring_mask * px.log_prob(x)
+        # lpm = pm.log_prob(scoring_mask) # or pm.log_prob(scoring_mask)
+
+        # ll = lpx + mechanism_weight * lpm
+
+        
 
         # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
         lpd = ll.sum(dim=0)
@@ -992,6 +1004,7 @@ class PROTVI(
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
+        use_x_mix=False,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -1028,6 +1041,7 @@ class PROTVI(
             loss_type=loss_type,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
+            use_x_mix=use_x_mix,
             n_prior_continuous_cov=self.summary_stats.get("n_prior_continuous_covs", 0),
             n_prior_cats_per_cov=n_prior_cats_per_cov,
             **model_kwargs,
