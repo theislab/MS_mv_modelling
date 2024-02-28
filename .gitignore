@@ -2,6 +2,9 @@
 data/
 results/
 
+*.svg
+*.png
+
 *.h5ad
 _*.ipynb
 

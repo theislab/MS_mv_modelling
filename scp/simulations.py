@@ -218,7 +218,7 @@ def add_train_test_set(adata, train_mask, layer=None):
     adata.layers["test"][train_mask] = np.nan
 
 
-def create_mnar_mcar_mask(mv_rate, mnar_proportion, x, seed=None):
+def create_mnar_mcar_mask(mv_rate, mnar_proportion, x, seed=None, sd_scale=1.0):
     """
     Create a mask for missing values that are MNAR and MCAR.
 
@@ -240,7 +240,7 @@ def create_mnar_mcar_mask(mv_rate, mnar_proportion, x, seed=None):
     def expected_mask_sum(xx, mu, sd):
         return 1 - np.nanmean(norm.cdf(xx, loc=mu, scale=sd))
     
-    sd = np.nanstd(x) / 2
+    sd = np.nanstd(x) / 2 * sd_scale
 
     q_low = np.nanquantile(x, q=mv_rate * 0.0001)
     q_high = np.nanquantile(x, q=mv_rate)
@@ -251,7 +251,7 @@ def create_mnar_mcar_mask(mv_rate, mnar_proportion, x, seed=None):
     p = np.clip(mnar_proportion * mv_rate, inv_mnar_curve.x[0], inv_mnar_curve.x[-1])
     q = inv_mnar_curve(p)
     threshold = np.random.normal(q, sd, size=x.shape)
-    m_mnar = x < threshold
+    m_mnar = x < threshold if mnar_proportion > 0 else np.zeros_like(x).astype(bool)
 
     # MCAR
     p_mcar = mv_rate * (1 - mnar_proportion) / (1 - mv_rate * mnar_proportion)
