@@ -78,6 +78,20 @@ def plot_loss(history, epoch_start=0, validation_smooth_window=None, pad=3):
 # generic results plots
 #############################################
 
+def scatter_protein_detection_proportion_and_intensity2(x, title=None, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(4, 3))
+
+    x_obs_protein = np.nanmean(x, axis=0)
+    p_protein = 1 - np.mean(np.isnan(x), axis=0)
+
+    ax.scatter(x_obs_protein, p_protein, color="b", alpha=.15, s=3)
+    ax.set_title(title)
+    ax.set_xlabel("protein log-intensity")
+    ax.set_ylabel("detection proportion")
+    ax.grid(True, color='lightgray')
+    ax.set_axisbelow(True)
+    
 
 def scatter_protein_detection_proportion_and_intensity(x, title=None, ax=None):
     if ax is None:
@@ -157,6 +171,29 @@ def plot_protein_detection_proportion_panel(x, p_est, x_est=None, color="blue", 
     )
 
 
+def plot_protein_detection_proportion_simple(x, p_est, x_est=None, color="blue", title="PROTVI"):
+    x_protein = np.nanmean(x, axis=0)
+    p_protein = 1 - np.mean(np.isnan(x), axis=0)
+    p_est_protein = p_est.mean(axis=0)
+
+    x_est_protein = np.nanmean(x_est, axis=0) if x_est is not None else None
+
+    scalar = .9
+    fig, axes = plt.subplots(figsize=(8*scalar, 4*scalar), ncols=2)
+    fig.suptitle(title, fontsize=16, y=.94)
+    fig.tight_layout(w_pad=3)
+
+    _scatter_compare_protein_detection_proportion_and_intensity(
+        x_protein, p_protein, p_est_protein, x_est_protein=x_est_protein, color=color, ax=axes[0]
+    )
+    axes[0].set_title('')
+
+    _scatter_compare_protein_detection_proportion(
+        p_protein, p_est_protein, color=color, ax=axes[1]
+    )
+    axes[1].set_title('')
+
+
 def _scatter_compare_protein_detection_proportion_and_intensity(
     x_protein, p_protein, p_est_protein, x_est_protein=None, color="blue", ax=None
 ):
@@ -197,7 +234,7 @@ def _scatter_compare_protein_detection_proportion(
     mse = metrics.mse(p_protein, p_est_protein)
     ax.text(
         0.03,
-        0.94,
+        0.92,
         f"MSE: {mse:.3f}",
         fontsize=10,
         bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
@@ -255,8 +292,8 @@ def _scatter_compare_protein_detection_proportion_difference(
 
 
 def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
-    fig, axes = plt.subplots(figsize=(16, 5), ncols=3)
-    fig.tight_layout(pad=4)
+    fig, axes = plt.subplots(figsize=(12, 4), ncols=3)
+    fig.tight_layout(pad=2)
     fig.suptitle(title, fontsize=16, y=1.05)
 
     x_est_obs = x_est.copy()
@@ -298,7 +335,7 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     )
     ax.text(
         0.03,
-        0.94,
+        0.92,
         f"MSE: {mse:.3f}",
         fontsize=10,
         bbox=dict(facecolor="white", edgecolor="black", boxstyle="round"),
@@ -306,11 +343,10 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
     )
     ax.set_xlabel("Observed protein log-intensity")
     ax.set_ylabel("Predicted protein log-intensity")
-    ax.set_title("Predicted intensity vs. observed intensity \n- for each protein")
     ax.grid(True)
     ax.set_axisbelow(True)
 
-    #############################################
+    scatter_compare_obs_mis_protein_intensity(x, x_est, ax=axes[1])
 
     protein_with_missing_intensities_mask = np.isnan(x).any(axis=0)
     x_est_obs_protein_shared = np.nanmean(
@@ -320,19 +356,48 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
         x_est_miss[:, protein_with_missing_intensities_mask], axis=0
     )
 
-    ax = axes[1]
+    ax = axes[2]
+    diff = x_est_obs_protein_shared - x_est_miss_protein_shared
+    ax.hist(diff, bins=60, color="red", edgecolor="black", linewidth=1.2)
+    ax.set_ylabel("Number of proteins")
+    ax.set_xlabel(
+        "Avg. pred. observed log-intensity - avg. pred. missing log-intensity"
+    )
+    ax.grid(True)
+    ax.set_axisbelow(True)
+
+def scatter_compare_obs_mis_protein_intensity(x, x_est, title=None, ax=None, color=None):
+    x_est_obs = x_est.copy()
+    x_est_obs[np.isnan(x)] = np.nan
+
+    x_est_miss = x_est.copy()
+    x_est_miss[~np.isnan(x)] = np.nan
+
+    protein_with_missing_intensities_mask = np.isnan(x).any(axis=0)
+    x_est_obs_protein_shared = np.nanmean(
+        x_est_obs[:, protein_with_missing_intensities_mask], axis=0
+    )
+    x_est_miss_protein_shared = np.nanmean(
+        x_est_miss[:, protein_with_missing_intensities_mask], axis=0
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
     min_v = min(x_est_obs_protein_shared.min(), x_est_miss_protein_shared.min())
     max_v = max(x_est_obs_protein_shared.max(), x_est_miss_protein_shared.max())
     ax.plot(
         [min_v, max_v], [min_v, max_v], color="black", linewidth=1.2, linestyle="--"
     )
+
+    color = "red" if color is None else color
     ax.scatter(
         x_est_miss_protein_shared,
         x_est_obs_protein_shared,
-        color="red",
+        color=color,
         edgecolor="black",
         linewidth=0,
-        s=6,
+        s=4,
         alpha=0.5,
     )
     ax.scatter(
@@ -344,27 +409,14 @@ def plot_protein_intensity_panel(x, x_est, title="PROTVI"):
         s=40,
         alpha=1,
     )
+
+    if title is not None:
+        ax.set_title(title)
+        
     ax.set_xlabel("Predicted missing protein log-intensity")
     ax.set_ylabel("Predicted observed protein log-intensity")
-    ax.set_title(
-        "Predicted observed intensity vs. predicted missing intensity \n- for each protein"
-    )
     ax.grid(True)
     ax.set_axisbelow(True)
-
-    ax = axes[2]
-    diff = x_est_obs_protein_shared - x_est_miss_protein_shared
-    ax.hist(diff, bins=60, color="red", edgecolor="black", linewidth=1.2)
-    ax.set_ylabel("Number of proteins")
-    ax.set_xlabel(
-        "Avg. pred. observed log-intensity - avg. pred. missing log-intensity"
-    )
-    ax.set_title(
-        "Difference in predicted observed intensity vs. \n predicted missing intensity - for each protein"
-    )
-    ax.grid(True)
-    ax.set_axisbelow(True)
-
 
 def scatter_compare_protein_missing_intensity(
     x_protein, x_est_protein, color="red", ax=None
@@ -657,3 +709,43 @@ def plot_confusion_matrix(y_test, y_pred, labels):
     sns.heatmap(cf, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
     plt.xlabel("Predicted")
     plt.ylabel("True")
+
+
+#############################################
+# Simulation plots
+#############################################
+
+def plot_mnar_mcar_ratio(adata, m_mnar, m_mcar, normalize=False, ax=None):
+    bins = np.linspace(np.nanmin(adata.X), np.nanmax(adata.X), num=30)
+
+    x_mnar = adata.X[m_mnar]
+    hist_mnar, edges_mnar = np.histogram(x_mnar, bins=bins)
+
+    x_mcar = adata.X[m_mcar]
+    hist_mcar, edges_mcar = np.histogram(x_mcar, bins=bins)
+
+
+    if normalize:
+        x_all = adata.X[~np.isnan(adata.X)]
+        hist_all, _ = np.histogram(x_all, bins=bins)
+        
+        bars_mnar = hist_mnar / hist_all
+        bars_mcar = hist_mcar / hist_all
+    else:
+        bars_mnar = hist_mnar
+        bars_mcar = hist_mcar
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 3))
+
+    ax.bar(edges_mnar[:-1], bars_mnar + bars_mcar, width=np.diff(edges_mnar), align="edge", edgecolor="black", label="MNAR")
+    ax.bar(edges_mcar[:-1], bars_mcar, width=np.diff(edges_mcar), align="edge", edgecolor="black", label="MCAR")
+    ax.set_xlabel("Protein expression")
+
+    if normalize:
+        ax.set_ylabel("Normalized")
+    else:
+        ax.set_ylabel("Number of proteins")
+
+    ax.grid(True)
+    ax.set_axisbelow(True)
