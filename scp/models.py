@@ -132,7 +132,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -215,7 +215,7 @@ class HybridDecoderPROTVI(nn.Module):
         self.x_p = GlobalLinear(n_output)
         self.z_p = nn.Linear(n_hidden, 1)
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -238,6 +238,10 @@ class HybridDecoderPROTVI(nn.Module):
         # z -> x
         h = self.h_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(h)
+
+        if size_factors is not None:
+            x_mean = x_mean - size_factors
+            
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -305,7 +309,7 @@ class SelectionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -328,6 +332,9 @@ class SelectionDecoderPROTVI(nn.Module):
         # z -> x
         x_h = self.x_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(x_h)
+
+        if size_factors is not None:
+            x_mean = x_mean - size_factors
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(x_h)
@@ -448,7 +455,8 @@ class PROTVAE(BaseModuleClass):
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
-        use_x_mix=False,
+        use_x_mix = False,
+        encode_norm_factors = False,
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Optional[Iterable[int]] = None,
     ):
@@ -461,7 +469,8 @@ class PROTVAE(BaseModuleClass):
         self.loss_type = loss_type
         self.n_samples = n_samples
         self.max_loss_dropout = max_loss_dropout
-        self.use_x_mix=use_x_mix
+        self.use_x_mix = use_x_mix
+        self.encode_norm_factors = encode_norm_factors
 
         losses = {
             "elbo": self._elbo_loss,
@@ -483,6 +492,22 @@ class PROTVAE(BaseModuleClass):
             n_output=n_latent,
             n_cat_list=encoder_cat_list,
             n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            distribution=latent_distribution,
+            inject_covariates=deeply_inject_covariates,
+            use_batch_norm=use_batch_norm_encoder,
+            use_layer_norm=use_layer_norm_encoder,
+            var_activation=var_activation,
+            return_dist=True,
+        )
+
+
+        self.l_encoder = Encoder(
+            n_input=n_input_encoder,
+            n_output=1,
+            n_cat_list=encoder_cat_list,
+            n_layers=1,
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
             distribution=latent_distribution,
@@ -521,7 +546,7 @@ class PROTVAE(BaseModuleClass):
             n_input=n_input_prior_encoder,
             n_output=n_latent,
             n_cat_list=cat_list,
-            n_layers=n_layers,
+            n_layers=n_layers,  # this should be set to 1?
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
             distribution=latent_distribution,
@@ -616,14 +641,25 @@ class PROTVAE(BaseModuleClass):
         # shape: (n_samples, n_batch, n_latent)
         z = qz.rsample(torch.Size([n_samples]))
 
+        ql = None
+        library = None
+        if self.encode_norm_factors:
+            ql, mean_library = self.l_encoder(encoder_input, batch_index, *categorical_input)
+            library = ql.sample((n_samples,))
+            
+
         return {
             "pz": pz,
             "qz": qz,
             "z": z,
+            "library": library,
         }
 
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
+        size_factor = inference_outputs["library"]
+        
+        
 
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
@@ -637,6 +673,7 @@ class PROTVAE(BaseModuleClass):
         return {
             "x": x,
             "z": z,
+            "size_factor": size_factor,
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
@@ -647,10 +684,12 @@ class PROTVAE(BaseModuleClass):
         self,
         x,
         z,
+        size_factor,
         batch_index,
         cont_covs=None,
         cat_covs=None,
         use_x_mix=False,
+        
     ):
         """Runs the generative model."""
 
@@ -686,7 +725,7 @@ class PROTVAE(BaseModuleClass):
         x_obs = x.repeat(n_samples, 1) if use_x_mix else None
 
         x_mean, x_var, m_prob = self.decoder(
-            decoder_input, x_obs, batch_index, *categorical_input
+            decoder_input, x_obs, size_factor, batch_index, *categorical_input
         )
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
@@ -703,12 +742,19 @@ class PROTVAE(BaseModuleClass):
     def _get_distributions(self, inference_outputs, generative_outputs):
         qz = inference_outputs["qz"]
         pz = inference_outputs["pz"]
+        # size_factor = inference_outputs["library"]
 
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
 
         px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
+
+        # if self.encode_norm_factors:
+        #      px = Normal(loc=x_mean - size_factor, scale=torch.sqrt(x_var))
+        # else:
+        #      px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
+        
         pm = Bernoulli(probs=m_prob)
 
         return {
@@ -1004,7 +1050,8 @@ class PROTVI(
         loss_type: Tunable[Literal["elbo", "iwae"]] = "elbo",
         n_samples: Tunable[int] = 1,
         max_loss_dropout: Tunable[float] = 0.0,
-        use_x_mix=False,
+        use_x_mix = False,
+        encode_norm_factors = False,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -1042,6 +1089,7 @@ class PROTVI(
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
             use_x_mix=use_x_mix,
+            encode_norm_factors=encode_norm_factors,
             n_prior_continuous_cov=self.summary_stats.get("n_prior_continuous_covs", 0),
             n_prior_cats_per_cov=n_prior_cats_per_cov,
             **model_kwargs,
