@@ -605,9 +605,9 @@ class PROTVAE(BaseModuleClass):
 
         ## latent prior
         if prior_cont_covs is not None:
-            prior_continous_input = prior_cont_covs
+            prior_continous_input = prior_cont_covs.to(x.device)
         else:
-            prior_continous_input = torch.empty(0)
+            prior_continous_input = torch.empty(0).to(x.device)
         
         if prior_cat_covs is not None:
             prior_categorical_input = torch.split(prior_cat_covs, 1, dim=1)
