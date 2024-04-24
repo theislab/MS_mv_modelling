@@ -132,7 +132,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factor: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -155,6 +155,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         # z -> px
         h = self.h_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(h)
+        x_mean *= size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -215,7 +216,7 @@ class HybridDecoderPROTVI(nn.Module):
         self.x_p = GlobalLinear(n_output)
         self.z_p = nn.Linear(n_hidden, 1)
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factor= torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -238,10 +239,10 @@ class HybridDecoderPROTVI(nn.Module):
         # z -> x
         h = self.h_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(h)
+        x_mean *= size_factor
 
-        if size_factors is not None:
-            x_mean = x_mean - size_factors
-            
+      
+      
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -309,7 +310,7 @@ class SelectionDecoderPROTVI(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factors: torch.Tensor, *cat_list: int):
+    def forward(self, z: torch.Tensor, x_data: torch.Tensor, size_factor: torch.Tensor, *cat_list: int):
         """The forward computation for a single sample.
 
          #. Decodes the data from the latent space using the decoder network
@@ -332,9 +333,9 @@ class SelectionDecoderPROTVI(nn.Module):
         # z -> x
         x_h = self.x_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(x_h)
+        x_mean = x_mean - size_factor
+        x_mean = torch.squeeze(x_mean)
 
-        if size_factors is not None:
-            x_mean = x_mean - size_factors
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(x_h)
@@ -350,6 +351,7 @@ class SelectionDecoderPROTVI(nn.Module):
             m = x_data != 0
             x_mix = x_data * m + x_mean * ~m
 
+        
         m_prob = self.m_prob_decoder(x_mix)
 
         return x_mean, x_var, m_prob
@@ -368,6 +370,8 @@ class SelectionDecoderPROTVI(nn.Module):
 
 PRIOR_CAT_COVS_KEY = "prior_categorical_covs"
 PRIOR_CONT_COVS_KEY = "prior_continuous_covs"
+
+NORM_CONT_COVS_KEY = "norm_continuous_covs"
 
 
 class PROTVAE(BaseModuleClass):
@@ -457,8 +461,10 @@ class PROTVAE(BaseModuleClass):
         max_loss_dropout: Tunable[float] = 0.0,
         use_x_mix = False,
         encode_norm_factors = False,
+        use_norm_factors = False,
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Optional[Iterable[int]] = None,
+        n_norm_continuous_cov: int = 0,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -557,6 +563,10 @@ class PROTVAE(BaseModuleClass):
             return_dist=True,
         )
 
+   
+
+        self.size_factor = nn.Parameter(torch.randn(n_input))
+
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -578,6 +588,11 @@ class PROTVAE(BaseModuleClass):
             tensors[prior_cat_key] if prior_cat_key in tensors.keys() else None
         )
 
+        norm_cont_key = NORM_CONT_COVS_KEY
+        norm_cont_covs = (
+            tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
+        )
+
         return {
             "x": x,
             "batch_index": batch_index,
@@ -585,6 +600,7 @@ class PROTVAE(BaseModuleClass):
             "cat_covs": cat_covs,
             "prior_cont_covs": prior_cont_covs,
             "prior_cat_covs": prior_cat_covs,
+            "norm_cont_covs": norm_cont_covs,
         }
 
     @auto_move_data
@@ -596,12 +612,22 @@ class PROTVAE(BaseModuleClass):
         cat_covs=None,
         prior_cont_covs=None,
         prior_cat_covs=None,
+        norm_cont_covs=None,
         n_samples=None,
     ):
         """High level inference method.
 
         Runs the inference (encoder) model.
         """
+
+        ## csf adjustment
+        if norm_cont_covs is not None:
+            norm_continous_input = norm_cont_covs.to(x.device)
+            self.csf_offset = True
+        else:
+            norm_continous_input = torch.empty(0).to(x.device)
+            self.csf_offset = False
+            
 
         ## latent prior
         if prior_cont_covs is not None:
@@ -646,13 +672,19 @@ class PROTVAE(BaseModuleClass):
         if self.encode_norm_factors:
             ql, mean_library = self.l_encoder(encoder_input, batch_index, *categorical_input)
             library = ql.sample((n_samples,))
+        elif self.csf_offset:
+            library = norm_continous_input
+        else:
+            library = self.size_factor
             
 
+        
         return {
             "pz": pz,
             "qz": qz,
             "z": z,
             "library": library,
+            
         }
 
     def _get_generative_input(self, tensors, inference_outputs):
@@ -724,6 +756,10 @@ class PROTVAE(BaseModuleClass):
         # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
         x_obs = x.repeat(n_samples, 1) if use_x_mix else None
 
+        # x_mean, x_var, m_prob = self.decoder(
+        #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
+        # )
+
         x_mean, x_var, m_prob = self.decoder(
             decoder_input, x_obs, size_factor, batch_index, *categorical_input
         )
@@ -737,6 +773,7 @@ class PROTVAE(BaseModuleClass):
             "x_mean": x_mean,
             "x_var": x_var,
             "m_prob": m_prob,
+            "x": x,
         }
 
     def _get_distributions(self, inference_outputs, generative_outputs):
@@ -747,13 +784,19 @@ class PROTVAE(BaseModuleClass):
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
+        x = generative_outputs["x"]
+        m = x != 0
+        x_mix = x * m + x_mean * ~m
 
-        px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
 
         # if self.encode_norm_factors:
-        #      px = Normal(loc=x_mean - size_factor, scale=torch.sqrt(x_var))
+        #      px = Normal(loc=(x_mean - size_factor), scale=torch.sqrt(x_var)) 
         # else:
-        #      px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
+        #      px = Normal(loc= x_mean, scale=torch.sqrt(x_var))
+
+        px = Normal(loc= x_mean, scale=torch.sqrt(x_var))
+             
+             
         
         pm = Bernoulli(probs=m_prob)
 
@@ -1111,6 +1154,7 @@ class PROTVI(
         continuous_covariate_keys: Optional[List[str]] = None,
         prior_continuous_covariate_keys: Optional[List[str]] = None,
         prior_categorical_covariate_keys: Optional[List[str]] = None,
+        norm_continuous_covariate_keys: Optional[List[str]] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -1147,6 +1191,10 @@ class PROTVI(
             ),
             NumericalJointObsField(
                 PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys
+            ),
+
+            NumericalJointObsField(
+                NORM_CONT_COVS_KEY, norm_continuous_covariate_keys
             ),
         ]
         adata_manager = AnnDataManager(
