@@ -241,7 +241,8 @@ class HybridDecoderPROTVI(nn.Module):
         # z -> x
         h = self.h_decoder(z, *cat_list)
         x_mean = self.x_mean_decoder(h)
-        x_mean *= size_factor
+        x_mean = x_mean - size_factor
+        x_mean = torch.squeeze(x_mean)
 
       
       
