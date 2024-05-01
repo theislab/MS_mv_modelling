@@ -468,6 +468,7 @@ class PROTVAE(BaseModuleClass):
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Optional[Iterable[int]] = None,
         n_norm_continuous_cov: int = 0,
+
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -479,8 +480,6 @@ class PROTVAE(BaseModuleClass):
         self.n_samples = n_samples
         self.max_loss_dropout = max_loss_dropout
         self.use_x_mix = use_x_mix
-        self.encode_norm_factors = encode_norm_factors
-
         losses = {
             "elbo": self._elbo_loss,
             "iwae": self._iwae_loss,
@@ -868,15 +867,6 @@ class PROTVAE(BaseModuleClass):
 
         ll = scoring_mask * (lpx + lpm)
 
-
-        # # GINA-like loss ------
-        # lpx = scoring_mask * px.log_prob(x)
-        # lpm = pm.log_prob(scoring_mask) # or pm.log_prob(scoring_mask)
-
-        # ll = lpx + mechanism_weight * lpm
-
-        
-
         # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
         lpd = ll.sum(dim=0)
 
@@ -1016,7 +1006,7 @@ class ProteinMixin:
                 distributions = self.module._get_distributions(
                     inference_outputs, generative_outputs
                 )
-                x = tensors[REGISTRY_KEYS.X_KEY]
+                x = tensors[REGISTRY_KEYS.X_KEY].to(inference_outputs["z"].device)
                 mask = (x != 0).type(torch.float32)
                 scoring_mask = mask
                 lw = self.module._get_importance_weights(
