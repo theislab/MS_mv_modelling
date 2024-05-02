@@ -48,7 +48,9 @@ def impute_downshifted_normal_global(
     std = np.nanstd(x)
 
     np.random.seed(42)
-    draws = np.random.normal(loc=mean - shift * std, scale=scale * std, size=len(missing_indices[0]))
+    draws = np.random.normal(
+        loc=mean - shift * std, scale=scale * std, size=len(missing_indices[0])
+    )
     x[missing_indices] = draws
 
     return x
@@ -159,12 +161,14 @@ def run_protDP(adata, layer=None):
     anndata2ri.activate()
     r.assign("r_adata", r_adata)
 
-    r(f"""
+    r(
+        f"""
         library(protDP)
 
         X <- assay(r_adata, "{layer}")
         dpcfit <- dpc(X)
-        """)
+        """
+    )
     dpcFit = r("dpcfit")
 
     def listvector_to_dict(r_listvector):

@@ -10,17 +10,10 @@ description = "A deep generative model for single-cell MS-based proteomics data.
 readme = "README.md"
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
-dependencies = [
-    "scvi-tools",
-    "numpy",
-    "scanpy",
-    "matplotlib",
-    "pandas",
-    "seaborn",
-    "anndata2ri",
-    # for notebooks
-    "ipykernel",
-]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.ruff]
 line-length = 120
@@ -64,3 +57,6 @@ ignore = [
     # We want docstrings to start immediately after the opening triple quote
     "D213",
 ]
+
+[tool.mypy]
+disable_error_code = "import-untyped"

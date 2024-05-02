@@ -3,12 +3,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import protvi.metrics as metrics
 import protvi.plots as pl
 import protvi.utils as utils
 import scanpy as sc
 import seaborn as sns
-import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
@@ -366,9 +364,9 @@ def load_data(
         x_combined = utils.fill_if_nan(main_adata.X, pilot_adata.X)
 
         print()
-        print(f"main intensity coverage:     {metrics.get_coverage(main_adata.X):.2%}")
-        print(f"pilot intensity coverage:    {metrics.get_coverage(pilot_adata.X):.2%}")
-        print(f"combined intensity coverage: {metrics.get_coverage(x_combined):.2%}")
+        print(f"main intensity coverage:     {_metrics.get_coverage(main_adata.X):.2%}")
+        print(f"pilot intensity coverage:    {_metrics.get_coverage(pilot_adata.X):.2%}")
+        print(f"combined intensity coverage: {_metrics.get_coverage(x_combined):.2%}")
 
     return adata
 
@@ -384,12 +382,12 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     ## entry-wise intensities ##
 
     # mse
-    main_model_mse = metrics.mse(x_main[m_main], x_est[m_main])
-    pilot_model_mse = metrics.mse(x_pilot[m_pilot], x_est[m_pilot])
+    main_model_mse = _metrics.mse(x_main[m_main], x_est[m_main])
+    pilot_model_mse = _metrics.mse(x_pilot[m_pilot], x_est[m_pilot])
 
     # pearson
-    main_model_pearson = metrics.pearson(x_main[m_main], x_est[m_main])
-    pilot_model_pearson = metrics.pearson(x_pilot[m_pilot], x_est[m_pilot])
+    main_model_pearson = _metrics.pearson(x_main[m_main], x_est[m_main])
+    pilot_model_pearson = _metrics.pearson(x_pilot[m_pilot], x_est[m_pilot])
 
     ## protein-wise intensities ##
     x_est_main_obs = x_est.copy()
@@ -409,12 +407,12 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     x_est_pilot_obs_protein = np.nanmean(x_est_pilot_obs[:, idx_proteins_pilot], axis=0)
 
     # mse
-    main_model_protein_mse = metrics.mse(x_main_protein, x_est_main_obs_protein)
-    pilot_model_protein_mse = metrics.mse(x_pilot_protein, x_est_pilot_obs_protein)
+    main_model_protein_mse = _metrics.mse(x_main_protein, x_est_main_obs_protein)
+    pilot_model_protein_mse = _metrics.mse(x_pilot_protein, x_est_pilot_obs_protein)
 
     # pearson
-    main_model_protein_pearson = metrics.pearson(x_main_protein, x_est_main_obs_protein)
-    pilot_model_protein_pearson = metrics.pearson(x_pilot_protein, x_est_pilot_obs_protein)
+    main_model_protein_pearson = _metrics.pearson(x_main_protein, x_est_main_obs_protein)
+    pilot_model_protein_pearson = _metrics.pearson(x_pilot_protein, x_est_pilot_obs_protein)
 
     ## protein-wise difference intensities ##
 
@@ -456,8 +454,8 @@ def compute_common_metrics_protDP(x_main, x_pilot, x_est_obs, x_est_miss):
     pilot_model_protein_mse = np.nanmean((x_pilot_protein - x_est_pilot_protDP) ** 2)
 
     # pearson
-    main_model_protein_pearson = metrics.pearson(x_main_protein, x_est_main_protDP)
-    pilot_model_protein_pearson = metrics.pearson(x_pilot_protein, x_est_pilot_protDP)
+    main_model_protein_pearson = _metrics.pearson(x_main_protein, x_est_main_protDP)
+    pilot_model_protein_pearson = _metrics.pearson(x_pilot_protein, x_est_pilot_protDP)
 
     result = {
         "main_model_protein_mse": main_model_protein_mse,
@@ -514,10 +512,10 @@ def scatter_main_pilot_model(
     # x_pilot[~overlap_mask] = np.nan
     # x_est[~overlap_mask] = np.nan
 
-    main_pilot_protein_comparison = metrics.compare_intensities_protein_wise(
+    main_pilot_protein_comparison = _metrics.compare_intensities_protein_wise(
         x_main, x_pilot, idx_proteins=idx_proteins, metrics=metric_types, n_min_overlap=n_min_protein_overlap
     )
-    model_pilot_protein_comparison = metrics.compare_intensities_protein_wise(
+    model_pilot_protein_comparison = _metrics.compare_intensities_protein_wise(
         x_est, x_pilot, idx_proteins=idx_proteins, metrics=metric_types, n_min_overlap=n_min_protein_overlap
     )
 
