@@ -1,7 +1,6 @@
 import numpy as np
-from protvi.utils import (
-    prepare_anndata_for_R,
-)
+
+from protvi.utils import prepare_anndata_for_R
 
 
 def impute_downshifted_normal_sample(
@@ -48,9 +47,7 @@ def impute_downshifted_normal_global(
     std = np.nanstd(x)
 
     np.random.seed(42)
-    draws = np.random.normal(
-        loc=mean - shift * std, scale=scale * std, size=len(missing_indices[0])
-    )
+    draws = np.random.normal(loc=mean - shift * std, scale=scale * std, size=len(missing_indices[0]))
     x[missing_indices] = draws
 
     return x

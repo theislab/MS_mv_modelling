@@ -1,8 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import protvi.metrics as metrics
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+
+import protvi.metrics as metrics
 
 """
     Common plots used in multiple notebooks

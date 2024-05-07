@@ -58,8 +58,6 @@ ignore = [
     # We want docstrings to start immediately after the opening triple quote
     "D213",
 ]
-[tool.ruff.lint.pydocstyle]
-convention = "google"
 
 [tool.mypy]
 strict = false

@@ -29,19 +29,31 @@ class PROTVI(
 ):
     """ProtVI model.
 
-    Args:
-        adata: AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
-        n_hidden: Number of nodes per hidden layer.
-        n_latent: Dimensionality of the latent space.
-        n_layers: Number of hidden layers used for encoder and decoder NNs.
-        dropout_rate: Dropout rate for neural networks.
-        latent_distribution:
-            One of:
+    Parameters
+    ----------
+    adata:
+        AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
 
-            * ``'normal'`` - Normal distribution
-            * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
-        log_variational
-            Log(data+1) prior to encoding for numerical stability. Not normalization.
+    n_hidden:
+        Number of nodes per hidden layer.
+
+    n_latent:
+        Dimensionality of the latent space.
+
+    n_layers:
+        Number of hidden layers used for encoder and decoder NNs.
+
+    dropout_rate:
+        Dropout rate for neural networks.
+
+    latent_distribution:
+        One of:
+
+        * ``'normal'`` - Normal distribution
+        * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
+
+    log_variational
+        Log(data+1) prior to encoding for numerical stability. Not normalization.
 
     """
 
@@ -148,7 +160,7 @@ class PROTVI(
         adata = self._validate_anndata(adata)
 
         if indices is None:
-            indices = np.arange(adata.n_obs) # type: ignore
+            indices = np.arange(adata.n_obs)  # type: ignore
 
         scdl = self._make_data_loader(
             adata=adata,
@@ -228,21 +240,32 @@ class PROTVI(
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
 
-        Args:
+        Parameters
+        ----------
             adata
                 AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
+
             layer
                 Name of the layer for which to extract the data.
+
             batch_key
                 Key in ``adata.obs`` for batches/cell types/categories.
+
             categorical_covariate_keys
                 List of keys in ``adata.obs`` for categorical covariates.
+
             continuous_covariate_keys
                 List of keys in ``adata.obs`` for continuous covariates.
+
             prior_categorical_covariate_keys
                 List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
+
             prior_continuous_covariate_keys
                 List of keys in ``adata.obs`` for prior continuous covariates.
+
+            norm_continuous_covariate_keys
+                List of keys in ``adata.obs`` for normalized continuous covariates.
+
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
