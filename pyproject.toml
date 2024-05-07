@@ -28,6 +28,7 @@ lint.select = [
     "C4",  # flake8-comprehensions
     "BLE",  # flake8-blind-except
     "UP",  # pyupgrade
+    "TCH",  # Typing imports
     "RUF100",  # Report unused noqa directives
 ]
 ignore = [
@@ -57,6 +58,14 @@ ignore = [
     # We want docstrings to start immediately after the opening triple quote
     "D213",
 ]
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.mypy]
-disable_error_code = "import-untyped"
+strict = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+ignore_missing_imports = true
+no_strict_optional = true

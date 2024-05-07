@@ -1,5 +1,6 @@
 import logging
-from typing import Callable, Iterable, List, Literal, Optional, Sequence  # noqa: UP035
+from collections.abc import Iterable
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import torch
@@ -16,12 +17,11 @@ from scvi.nn import (
 from torch import nn as nn
 from torch.distributions import Bernoulli, Normal, kl_divergence
 
-from ._extra_keys import EXTRA_KEYS
+from ._constants import EXTRA_KEYS
 
 logger = logging.getLogger(__name__)
 
 
-## nn modules
 class GlobalLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
         super().__init__()
@@ -78,7 +78,6 @@ class ElementwiseLinear(nn.Module):
         return out
 
 
-## Decoder
 class ConjunctionDecoderPROTVI(nn.Module):
     def __init__(
         self,
@@ -216,7 +215,7 @@ class HybridDecoderPROTVI(nn.Module):
         z: torch.Tensor,
         x_data: torch.Tensor,
         size_factor: torch.Tensor,
-        *cat_list: int,
+        *cat_list: list[int],
     ):
         """The forward computation for a single sample.
 
@@ -365,7 +364,6 @@ class SelectionDecoderPROTVI(nn.Module):
             bias = self.m_logit.bias.detach().cpu().numpy()
 
         return weight, bias
-
 
 
 class PROTVAE(BaseModuleClass):
@@ -568,19 +566,13 @@ class PROTVAE(BaseModuleClass):
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
         prior_cont_key = EXTRA_KEYS.PRIOR_CONT_COVS_KEY
-        prior_cont_covs = (
-            tensors[prior_cont_key] if prior_cont_key in tensors.keys() else None
-        )
+        prior_cont_covs = tensors[prior_cont_key] if prior_cont_key in tensors.keys() else None
 
         prior_cat_key = EXTRA_KEYS.PRIOR_CAT_COVS_KEY
-        prior_cat_covs = (
-            tensors[prior_cat_key] if prior_cat_key in tensors.keys() else None
-        )
+        prior_cat_covs = tensors[prior_cat_key] if prior_cat_key in tensors.keys() else None
 
         norm_cont_key = EXTRA_KEYS.NORM_CONT_COVS_KEY
-        norm_cont_covs = (
-            tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
-        )
+        norm_cont_covs = tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
 
         return {
             "x": x,
@@ -657,9 +649,7 @@ class PROTVAE(BaseModuleClass):
         ql = None
         library = None
         if self.encode_norm_factors:
-            ql, mean_library = self.l_encoder(
-                encoder_input, batch_index, *categorical_input
-            )
+            ql, mean_library = self.l_encoder(encoder_input, batch_index, *categorical_input)
             library = ql.sample((n_samples,))
         elif self.csf_offset:
             library = norm_continous_input
@@ -707,7 +697,6 @@ class PROTVAE(BaseModuleClass):
         use_x_mix=False,
     ):
         """Runs the generative model."""
-
         n_samples, n_batch = z.size(0), z.size(1)
         use_x_mix = use_x_mix if self.use_x_mix is not None else self.use_x_mix
 
@@ -743,9 +732,7 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_mean, x_var, m_prob = self.decoder(
-            decoder_input, x_obs, size_factor, batch_index, *categorical_input
-        )
+        x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
         x_mean = x_mean.view(unpacked_shape)
@@ -802,11 +789,9 @@ class PROTVAE(BaseModuleClass):
         distributions = self._get_distributions(inference_outputs, generative_outputs)
 
         mask = (x != 0).type(torch.float32)
-        scoring_mask = self._get_scoring_mask(
-            mask, max_loss_dropout=self.max_loss_dropout
-        )
+        scoring_mask = self._get_scoring_mask(mask, max_loss_dropout=self.max_loss_dropout)
 
-        return self.loss_fn(
+        return self.loss_fn(  # type: ignore
             x=x,
             z=z,
             mask=mask,
@@ -820,11 +805,7 @@ class PROTVAE(BaseModuleClass):
         # the scoring mask acts as a dropout mask when computing the loss of the reconstructed features
         # In each sample a fraction of the features are used to compute the loss
         p_missing = torch.rand(mask.shape[0], 1) * max_loss_dropout
-        scoring_mask = (
-            torch.bernoulli(1.0 - p_missing.expand_as(mask))
-            .to(mask.dtype)
-            .to(mask.device)
-        )
+        scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
         return scoring_mask
 
     def _elbo_loss(
@@ -839,7 +820,7 @@ class PROTVAE(BaseModuleClass):
         kl_weight: float = 1.0,
         mechanism_weight: float = 1.0,
         **kwargs,
-    ):
+    ) -> LossOutput:
         lpx = mask * px.log_prob(x)
         lpm = mechanism_weight * pm.log_prob(mask)
 
@@ -859,13 +840,9 @@ class PROTVAE(BaseModuleClass):
         ## ELBO
         loss = (reconstruction_loss + weighted_kl).mean()
 
-        return LossOutput(
-            loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl
-        )
+        return LossOutput(loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl)
 
-    def _get_importance_weights(
-        self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0
-    ):
+    def _get_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
         lpx = mask * px.log_prob(x)
         lpm = mechanism_weight * pm.log_prob(mask)
 
@@ -892,10 +869,8 @@ class PROTVAE(BaseModuleClass):
         pm,
         mechanism_weight: float = 1.0,
         **kwargs,
-    ):
-        lw = self._get_importance_weights(
-            x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight
-        )
+    ) -> LossOutput:
+        lw = self._get_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
 
         # sum over samples: (n_samples, n_batch) -> (n_batch,)
         lw_sum = lw.logsumexp(dim=0) - np.log(lw.size(0))
@@ -906,5 +881,3 @@ class PROTVAE(BaseModuleClass):
 
     def sample(self):
         raise NotImplementedError
-
-
