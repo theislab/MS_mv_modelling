@@ -1,11 +1,13 @@
-# SCP - Single-cell MS Proteomics Modelling
+# protVI
 A deep generative model for single-cell MS proteomics data.
 
 
 ## Installation
-Change working directory to this repository, then (with your virtual environment activated) execute:
+You need to have Python 3.9 or newer installed on your system.
 
+Install the latest development version:
 ```
-pip install .
+git clone https://github.com/theislab/MS_mv_modelling.git
+cd MS_mv_modelling
+pip install -e .
 ```
-This will install the library and the dependencies.

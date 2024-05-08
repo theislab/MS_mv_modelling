@@ -1,16 +1,15 @@
-import pandas as pd
-import numpy as np
-import scanpy as sc
 import os
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import protvi.metrics as metrics
+import protvi.plots as pl
+import protvi.utils as utils
+import scanpy as sc
 import seaborn as sns
-import sklearn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-
-import scp.utils as utils
-import scp.plots as pl
-import scp.metrics as metrics
 
 """
     Functionality specific for the Mann's lab data.
@@ -18,7 +17,7 @@ import scp.metrics as metrics
 
 
 # data loading
-import os 
+
 
 def load_main_data(dir: str):
     annotations_path = os.path.join(dir, "annotations_main_lt_v21_Sc11_AIMsplit3.tsv")
@@ -26,9 +25,7 @@ def load_main_data(dir: str):
         dir,
         "DA-F08.4_-SEC-pass_v06Sc_ion_LibPGQVal1perc_precdLFQdefFull_prot_preprSc03.tsv",
     )
-    stats_path = os.path.join(
-        dir, "DA-F08.4_PL01-POL-LT-QC2_DA-SER1.19_C20Lib02_.stats.tsv"
-    )
+    stats_path = os.path.join(dir, "DA-F08.4_PL01-POL-LT-QC2_DA-SER1.19_C20Lib02_.stats.tsv")
 
     data = pd.read_csv(data_path, sep="\t", index_col="protein")
     obs = pd.read_csv(annotations_path, sep="\t")
@@ -85,13 +82,9 @@ def load_main_data(dir: str):
         "QIgG",
         "Total_protein",
     ]:
-        obs[o] = [
-            np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else float(a)
-            for a in obs[o]
-        ]
+        obs[o] = [np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else float(a) for a in obs[o]]
     obs["Erythrocytes_in_CSF"] = [
-        np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else a
-        for a in obs["Erythrocytes_in_CSF"]
+        np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else a for a in obs["Erythrocytes_in_CSF"]
     ]
 
     obs["Total_protein"][obs["Total_protein"] == 0] = np.nan
@@ -143,7 +136,11 @@ def load_main_data(dir: str):
     adata = adata[mask]
     adata = adata[~adata.obs["Erythrocytes"].isna()]
 
-    adata.obs["diagnosis_group_autoimmune"] = adata.obs["Diagnosis_group_autoimmune_split"].replace("Autoimmune_notMSrelated", "Autoimmune").replace("Autoimmune_MSrelated", "Autoimmune")
+    adata.obs["diagnosis_group_autoimmune"] = (
+        adata.obs["Diagnosis_group_autoimmune_split"]
+        .replace("Autoimmune_notMSrelated", "Autoimmune")
+        .replace("Autoimmune_MSrelated", "Autoimmune")
+    )
     adata.obs["diagnosis_group_autoimmune"] = adata.obs["diagnosis_group_autoimmune"].astype("category")
 
     adata.obs["Preparation day"] = [f"day{int(x[-1])}" for x in adata.obs["Preparation day"]]
@@ -152,16 +149,12 @@ def load_main_data(dir: str):
 
 
 def load_pilot_data(dir: str):
-    ANNOTATIONS_PATH = os.path.join(
-        dir, "2023_sample annotation_PILOTcohorts combined_v21_Sc06.tsv"
-    )
+    ANNOTATIONS_PATH = os.path.join(dir, "2023_sample annotation_PILOTcohorts combined_v21_Sc06.tsv")
     DATA_PATH = os.path.join(
         dir,
         "DAP-F03.4_-SEC-pass_v06Sc_ion_LibPGQVal1perc_precdLFQdefFull_protein_intensities.tsv",
     )
-    STATS_PATH = os.path.join(
-        dir, "DAP-F03.4_CH1+2+QC_DA-SER2.01_LibC20Lib02_.stats.tsv"
-    )
+    STATS_PATH = os.path.join(dir, "DAP-F03.4_CH1+2+QC_DA-SER2.01_LibC20Lib02_.stats.tsv")
 
     data = pd.read_csv(DATA_PATH, sep="\t", index_col="protein")
     obs = pd.read_csv(ANNOTATIONS_PATH, sep="\t")
@@ -210,13 +203,9 @@ def load_pilot_data(dir: str):
         "QIgG",
         "Total_protein",
     ]:
-        obs[o] = [
-            np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else float(a)
-            for a in obs[o]
-        ]
+        obs[o] = [np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else float(a) for a in obs[o]]
     obs["Erythrocytes_in_CSF"] = [
-        np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else a
-        for a in obs["Erythrocytes_in_CSF"]
+        np.nan if a in ["n. best.", "n. best. ", "na", "not measured"] else a for a in obs["Erythrocytes_in_CSF"]
     ]
 
     obs["Total_protein"][obs["Total_protein"] == 0] = np.nan
@@ -275,9 +264,7 @@ def filter_by_detection_proportion_by_patient(adata, min_protein_completeness=0.
     for group in np.unique(adata.obs["Diagnosis_group"]):
         sub = adata[adata.obs["Diagnosis_group"] == group]
         completeness = (sub.X == sub.X).mean(axis=0)
-        adata.var["filter"] = adata.var["filter"] * (
-            completeness < min_protein_completeness
-        ).astype(int)
+        adata.var["filter"] = adata.var["filter"] * (completeness < min_protein_completeness).astype(int)
 
     adata.var["filter"] = adata.var["filter"].astype(bool)
     adata._inplace_subset_var(~adata.var["filter"])
@@ -295,9 +282,7 @@ def preprocess(adata, filter_cells=0, min_protein_completeness=0.2, verbose=True
     if verbose:
         print(f"sc.pp.filter_cells: {adata.shape}")
 
-    filter_by_detection_proportion_by_patient(
-        adata, min_protein_completeness=min_protein_completeness
-    )
+    filter_by_detection_proportion_by_patient(adata, min_protein_completeness=min_protein_completeness)
     if verbose:
         print(f"filter: {adata.shape}")
 
@@ -328,9 +313,7 @@ def correct_batch(adata):
         # If only 1 cell exists in the plate, std_protein_per_plate will be 0. So we correct this.
         std_protein_per_plate[std_protein_per_plate == 0] = std
 
-        adata.X[mask, :] = (
-            ((x - mean_protein_per_plate) / std_protein_per_plate) * std
-        ) + mean_protein
+        adata.X[mask, :] = (((x - mean_protein_per_plate) / std_protein_per_plate) * std) + mean_protein
 
     # result stored in adata.X
 
@@ -435,7 +418,6 @@ def compute_common_metrics(x_main, x_pilot, x_est):
     ## protein-wise difference intensities ##
 
     # compare difference between estimated protein intensities and pilot in the categories obs and miss - based on main.
-    
 
     result = {
         # entry-wise
@@ -522,18 +504,14 @@ def scatter_main_pilot_model(
     metric_types=["pearson", "spearman", "mse"],
     n_min_protein_overlap=2,
 ):
-    idx_proteins_main_pilot = get_protein_overlap_idx(
-        x_main, x_pilot, n_min_protein_overlap=n_min_protein_overlap
-    )
-    idx_proteins_model_pilot = get_protein_overlap_idx(
-        x_est, x_pilot, n_min_protein_overlap=n_min_protein_overlap
-    )
+    idx_proteins_main_pilot = get_protein_overlap_idx(x_main, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
+    idx_proteins_model_pilot = get_protein_overlap_idx(x_est, x_pilot, n_min_protein_overlap=n_min_protein_overlap)
     idx_proteins = np.intersect1d(idx_proteins_main_pilot, idx_proteins_model_pilot)
 
-    #overlap_mask = ~np.isnan(x_main) & ~np.isnan(x_pilot)
-    #x_main[~overlap_mask] = np.nan
-    #x_pilot[~overlap_mask] = np.nan
-    #x_est[~overlap_mask] = np.nan
+    # overlap_mask = ~np.isnan(x_main) & ~np.isnan(x_pilot)
+    # x_main[~overlap_mask] = np.nan
+    # x_pilot[~overlap_mask] = np.nan
+    # x_est[~overlap_mask] = np.nan
 
     main_pilot_protein_comparison = metrics.compare_intensities_protein_wise(
         x_main, x_pilot, idx_proteins=idx_proteins, metrics=metric_types, n_min_overlap=n_min_protein_overlap
@@ -707,16 +685,16 @@ def plot_diagnostic_groups_umap(adata, field="X_umap"):
         ax.scatter(
             umap[:, 0],
             umap[:, 1],
-            c = "lightgrey",
-            s=10, 
+            c="lightgrey",
+            s=10,
         )
 
         umap = adata.obsm[field][mask]
         ax.scatter(
             umap[:, 0],
             umap[:, 1],
-            c = colors[i],
-            s=10, 
+            c=colors[i],
+            s=10,
         )
 
         ax.set_title(group, fontsize=14)
@@ -726,8 +704,6 @@ def plot_diagnostic_groups_umap(adata, field="X_umap"):
 
     for i in range(n_elements, n_cols * n_rows):
         axes[i // n_cols, i % n_cols].axis("off")
-
-
 
 
 def classify_diagnostic_group(adata, field="X_pca", n_components=10):
