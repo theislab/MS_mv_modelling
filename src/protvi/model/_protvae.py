@@ -135,6 +135,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
+
         cat_list
             list of category membership(s) for this sample
 

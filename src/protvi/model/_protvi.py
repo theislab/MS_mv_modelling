@@ -242,29 +242,32 @@ class PROTVI(
 
         Parameters
         ----------
-            adata
-                AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
+        adata
+            AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
 
-            layer
-                Name of the layer for which to extract the data.
+        layer
+            Name of the layer for which to extract the data.
 
-            batch_key
-                Key in ``adata.obs`` for batches/cell types/categories.
+        batch_key
+            Key in ``adata.obs`` for batches/cell types/categories.
 
-            categorical_covariate_keys
-                List of keys in ``adata.obs`` for categorical covariates.
+        categorical_covariate_keys
+            List of keys in ``adata.obs`` for categorical covariates.
 
-            continuous_covariate_keys
-                List of keys in ``adata.obs`` for continuous covariates.
+        continuous_covariate_keys
+            List of keys in ``adata.obs`` for continuous covariates.
 
-            prior_categorical_covariate_keys
-                List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
+        prior_categorical_covariate_keys
+            List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
 
-            prior_continuous_covariate_keys
-                List of keys in ``adata.obs`` for prior continuous covariates.
+        prior_continuous_covariate_keys
+            List of keys in ``adata.obs`` for prior continuous covariates.
 
-            norm_continuous_covariate_keys
-                List of keys in ``adata.obs`` for normalized continuous covariates.
+        norm_continuous_covariate_keys
+            List of keys in ``adata.obs`` for normalized continuous covariates.
+
+        **kwargs
+            Keyword args for AnnDataManager.register_fields
 
         """
         setup_method_args = cls._get_setup_method_args(**locals())
