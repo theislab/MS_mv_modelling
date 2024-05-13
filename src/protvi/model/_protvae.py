@@ -152,6 +152,8 @@ class ConjunctionDecoderPROTVI(nn.Module):
         x_mean = x_mean - size_factor
         x_mean = torch.squeeze(x_mean)
 
+        # @TODO: return x_norm
+
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
         elif self.x_variance == "protein":
@@ -242,6 +244,8 @@ class HybridDecoderPROTVI(nn.Module):
         x_mean = x_mean - size_factor
         x_mean = torch.squeeze(x_mean)
 
+        # @TODO: return x_norm (copy paste from selection)
+
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
         elif self.x_variance == "protein":
@@ -294,7 +298,7 @@ class SelectionDecoderPROTVI(nn.Module):
             **kwargs,
         )
 
-        self.x_mean_decoder = nn.Linear(n_hidden, n_output)
+        self.x_norm_decoder = nn.Linear(n_hidden, n_output)
 
         if self.x_variance == "protein-cell":
             self.x_var_decoder = nn.Linear(n_hidden, n_output)
@@ -335,9 +339,10 @@ class SelectionDecoderPROTVI(nn.Module):
         """
         # z -> x
         x_h = self.x_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(x_h)
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
+        x_norm = self.x_norm_decoder(x_h).squeeze()
+        x_mean = x_norm + size_factor
+
+         # @TODO: test if it crashes when batch size=1
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(x_h)
@@ -355,7 +360,7 @@ class SelectionDecoderPROTVI(nn.Module):
 
         m_prob = self.m_prob_decoder(x_mix)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         weight = self.m_logit.weight.detach().cpu().numpy()
@@ -733,18 +738,20 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
+        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
+        x_norm = x_norm.view(unpacked_shape)
         x_mean = x_mean.view(unpacked_shape)
         x_var = x_var.view(unpacked_shape)
         m_prob = m_prob.view(unpacked_shape)
 
         return {
+            "x": x,
+            "x_norm": x_norm,
             "x_mean": x_mean,
             "x_var": x_var,
             "m_prob": m_prob,
-            "x": x,
         }
 
     def _get_distributions(self, inference_outputs, generative_outputs):
