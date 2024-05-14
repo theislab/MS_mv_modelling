@@ -329,7 +329,7 @@ class SelectionDecoderPROTVI(nn.Module):
         z
             tensor with shape ``(n_input,)``
         cat_list
-            list of category membership(s) for this
+            list of category membership(s) for this sample
         x_data
             if set, use x_data instead of x_mean as input for the detection probability
         size_factor
@@ -834,16 +834,16 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
-        lpx = mask * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(mask)
+        log_px = mask * px.log_prob(x)
+        log_pm = mechanism_weight * pm.log_prob(mask)
 
-        ll = scoring_mask * (lpx + lpm)
+        log_obs = scoring_mask * (log_px + log_pm)
 
-        # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
-        lpd = ll.sum(dim=0)
+        # (n_samples, n_batch, n_features) -> (n_batch, n_features)
+        log_pd = log_obs.sum(dim=0)
 
-        # sum over features: (n_batch, n_features) -> (n_batch,)
-        reconstruction_loss = -lpd.sum(dim=-1)
+        # (n_batch, n_features) -> (n_batch,)
+        reconstruction_loss = -log_pd.sum(dim=-1)
 
         ## KL
         # (n_batch, n_latent) -> (n_batch,)
@@ -855,20 +855,20 @@ class PROTVAE(BaseModuleClass):
 
         return LossOutput(loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl)
 
-    def _get_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
-        lpx = mask * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(mask)
+    def _get_log_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
+        log_px = mask * px.log_prob(x)
+        log_pm = mechanism_weight * pm.log_prob(mask)
 
-        ll = scoring_mask * (lpx + lpm)
+        log_obs = scoring_mask * (log_px + log_pm)
 
-        # sum over features: (n_samples, n_batch, n_features) -> (n_samples, n_batch)
-        ll = ll.sum(dim=-1)
-        lpz = pz.log_prob(z).sum(dim=-1)
-        lqz = qz.log_prob(z).sum(dim=-1)
+        # (n_samples, n_batch, n_features) -> (n_samples, n_batch)
+        log_obs = log_obs.sum(dim=-1)
+        log_pz = pz.log_prob(z).sum(dim=-1)
+        log_qz = qz.log_prob(z).sum(dim=-1)
 
-        lw = ll + lpz - lqz
+        log_weights = log_obs + log_pz - log_qz
 
-        return lw
+        return log_weights
 
     def _iwae_loss(
         self,
@@ -883,12 +883,15 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
-        lw = self._get_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
+        log_weights = self._get_log_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
 
-        # sum over samples: (n_samples, n_batch) -> (n_batch,)
-        lw_sum = lw.logsumexp(dim=0) - np.log(lw.size(0))
+        # (n_samples, n_batch) -> (n_batch,)
+        log_weight_sum = log_weights.logsumexp(dim=0)
 
-        loss = -lw_sum.mean()
+        # Truncated Importance Sampling
+        log_weight_sum -= np.log(log_weights.size(0))
+
+        loss = -log_weight_sum.mean()
 
         return LossOutput(loss=loss, n_obs_minibatch=x.size(0))
 

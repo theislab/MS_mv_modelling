@@ -1,6 +1,5 @@
 import logging
 import warnings
-from collections.abc import Sequence
 from functools import partial
 from typing import Literal, Optional
 
@@ -75,25 +74,19 @@ class PROTVI(
     ----------
     adata:
         AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
-
     n_hidden:
         Number of nodes per hidden layer.
-
     n_latent:
         Dimensionality of the latent space.
-
     n_layers:
         Number of hidden layers used for encoder and decoder NNs.
-
     dropout_rate:
         Dropout rate for neural networks.
-
     latent_distribution:
         One of:
 
         * ``'normal'`` - Normal distribution
         * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
-
     log_variational
         Log(data+1) prior to encoding for numerical stability. Not normalization.
 
@@ -163,7 +156,7 @@ class PROTVI(
     def impute(
         self,
         adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
+        indices: Optional[list[int] | np.ndarray] = None,
         n_samples: Optional[int] = None,
         batch_size: int = 32,
         loss_type: Optional[Literal["elbo", "iwae"]] = None,
@@ -176,22 +169,16 @@ class PROTVI(
         adata
             AnnData object with equivalent structure to initial AnnData
             If None, defaults to the AnnData object used to initialize the model
-
         indices
             Indices of cells to use for imputation
-
         batch_size
             Batch size to use for imputation
-
         loss_type
             Loss type to use for imputation
-
         replace_with_obs
             Whether to replace the imputated values with the observed values
-
         n_samples
             number of samples to use for IWAE estimate
-
 
         Returns
         -------
@@ -202,7 +189,7 @@ class PROTVI(
         adata = self._validate_anndata(adata)
 
         if indices is None:
-            indices = np.arange(adata.n_obs)  # type: ignore
+            indices = np.arange(adata.n_obs)
 
         scdl = self._make_data_loader(
             adata=adata,
@@ -237,20 +224,18 @@ class PROTVI(
                 x = tensors[REGISTRY_KEYS.X_KEY].to(inference_outputs["z"].device)
                 mask = (x != 0).type(torch.float32)
                 scoring_mask = mask
-                lw = self.module._get_importance_weights(
+                log_weights = self.module._get_log_importance_weights(
                     x,
                     inference_outputs["z"],
                     mask,
                     scoring_mask,
                     **distributions,
                 )
-                lw = lw.cpu().numpy()
+                log_probs = log_weights - log_weights.logsumexp(dim=0)
+                probs = log_probs.exp().cpu().numpy()
 
-                e_x = np.exp(lw - np.max(lw, axis=0))
-                w = e_x / np.sum(e_x, axis=0)
-
-                x_imp = np.sum(x_mean * w[..., None], axis=0)
-                p_imp = np.sum(m_prob * w[..., None], axis=0)
+                x_imp = np.sum(x_mean * probs[..., None], axis=0)
+                p_imp = np.sum(m_prob * probs[..., None], axis=0)
             else:
                 raise ValueError(f"Invalid loss type: {loss_type}")
 
@@ -277,7 +262,7 @@ class PROTVI(
         # library_size: float | Literal["latent"] = 1,
         n_samples: int = 1,
         n_samples_overall: int = None,
-        # weights: Literal["uniform", "importance"] | None = None,
+        weights: Literal["uniform", "importance"] | None = None,
         batch_size: int | None = None,
         return_mean: bool = True,
         return_numpy: bool | None = None,
@@ -372,7 +357,13 @@ class PROTVI(
         if n_samples_overall is not None:
             norm_abuns = norm_abuns.reshape(-1, norm_abuns.shape[-1])
             n_samples_ = norm_abuns.shape[0]
-            ind_ = np.random.choice(n_samples_, n_samples_overall, p=None, replace=True)
+
+            if (weights is None) or weights == "uniform":
+                p = None
+            else:
+                p = None
+                # @TODO: importance sampling
+            ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
             norm_abuns = norm_abuns[ind_]
         elif n_samples > 1 and return_mean:
             norm_abuns = norm_abuns.mean(0)
@@ -468,28 +459,20 @@ class PROTVI(
         ----------
         adata
             AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
-
         layer
             Name of the layer for which to extract the data.
-
         batch_key
             Key in ``adata.obs`` for batches/cell types/categories.
-
         categorical_covariate_keys
             List of keys in ``adata.obs`` for categorical covariates.
-
         continuous_covariate_keys
             List of keys in ``adata.obs`` for continuous covariates.
-
         prior_categorical_covariate_keys
             List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
-
         prior_continuous_covariate_keys
             List of keys in ``adata.obs`` for prior continuous covariates.
-
         norm_continuous_covariate_keys
             List of keys in ``adata.obs`` for normalized continuous covariates.
-
         **kwargs
             Keyword args for AnnDataManager.register_fields
 
