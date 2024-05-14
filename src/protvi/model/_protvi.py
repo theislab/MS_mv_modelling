@@ -367,6 +367,10 @@ class PROTVI(
             n_samples=1,
             batch_size=batch_size,
         )
+
+        def change_fn(a, b):
+            return a - b
+
         result = _de_core(
             adata_manager=self.get_anndata_manager(adata, required=True),
             model_fn=model_fn,
@@ -385,6 +389,7 @@ class PROTVI(
             batchid2=batchid2,
             col_names=col_names,
             fdr=fdr_target,
+            change_fn=change_fn,
             silent=silent,
             **kwargs,
         )

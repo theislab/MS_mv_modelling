@@ -146,13 +146,9 @@ class ConjunctionDecoderPROTVI(nn.Module):
 
         """
         # z -> px
-        h = self.h_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(h)
-        # x_mean *= size_factor
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
-
-        # @TODO: return x_norm
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
+        x_mean = x_norm + size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -164,7 +160,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         # z -> p
         m_prob = self.m_prob_decoder(h)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         weight = self.m_logit.weight.detach().cpu().numpy()
@@ -239,12 +235,9 @@ class HybridDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        h = self.h_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(h)
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
-
-        # @TODO: return x_norm (copy paste from selection)
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
+        x_mean = x_norm + size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -266,7 +259,7 @@ class HybridDecoderPROTVI(nn.Module):
 
         m_prob = torch.sigmoid(z_p + x_p)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         return None, None
@@ -338,14 +331,12 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        x_h = self.x_decoder(z, *cat_list)
-        x_norm = self.x_norm_decoder(x_h).squeeze()
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
         x_mean = x_norm + size_factor
 
-         # @TODO: test if it crashes when batch size=1
-
         if self.x_variance == "protein-cell":
-            x_var = self.x_var_decoder(x_h)
+            x_var = self.x_var_decoder(h)
         elif self.x_variance == "protein":
             x_var = self.x_var.expand(x_mean.shape)
 
