@@ -16,6 +16,7 @@ from scvi.data.fields import (
     LayerField,
     NumericalJointObsField,
 )
+from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.model.base._utils import _de_core
 from torch import nn as nn
@@ -271,7 +272,7 @@ class PROTVI(
         self,
         adata: AnnData | None = None,
         indices: list[int] | np.ndarray | None = None,
-        # transform_batch: list[Number | str] | None = None,
+        transform_batch: str | int | None = None,
         # gene_list: list[str] | None = None,
         # library_size: float | Literal["latent"] = 1,
         n_samples: int = 1,  # @TODO: make test
@@ -281,8 +282,52 @@ class PROTVI(
         return_mean: bool = True,
         return_numpy: bool | None = None,
         # **importance_weighting_kwargs,
-        **kwargs,  # @TODO: remove
     ) -> np.ndarray | pd.DataFrame:
+        r"""Returns the normalized (decoded) protein abundance.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        transform_batch
+            Batch to condition on.
+            If transform_batch is:
+
+            - None, then real observed batch is used
+            - int, then batch transform_batch is used
+        gene_list
+            Return frequencies of expression for a subset of genes.
+            This can save memory when working with large datasets and few genes are
+            of interest.
+        n_samples
+            Number of posterior samples to use for estimation.
+        n_samples_overall
+            Number of posterior samples to use for estimation. Overrides `n_samples`.
+        weights
+            Weights to use for sampling. If `None`, defaults to `"uniform"`.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        return_mean
+            Whether to return the mean of the samples.
+        return_numpy
+            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame
+            includes gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults
+            to `False`. Otherwise, it defaults to `True`.
+
+        Returns
+        -------
+        If `n_samples` is provided and `return_mean` is False,
+        this method returns a 3d tensor of shape (n_samples, n_cells, n_genes).
+        If `n_samples` is provided and `return_mean` is True, it returns a 2d tensor
+        of shape (n_cells, n_genes).
+        In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        Otherwise, the method expects `n_samples_overall` to be provided and returns a 2d tensor
+        of shape (n_samples_overall, n_genes).
+
+        """
         adata = self._validate_anndata(adata)
 
         if indices is None:
@@ -293,7 +338,8 @@ class PROTVI(
 
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
-        # @TODO: test returning dataframe, numpy array with more than 1 sample. assert on shape.
+        transform_batch = _get_batch_code_from_category(self.get_anndata_manager(adata, required=True), transform_batch)
+
         if n_samples > 1 and return_mean is False:
             if return_numpy is False:
                 warnings.warn(
@@ -307,11 +353,13 @@ class PROTVI(
         norm_abuns = []
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
+            get_generative_input_kwargs = {"transform_batch": transform_batch[0]}
             generative_kwargs = {"use_x_mix": False}
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
                 generative_kwargs=generative_kwargs,
                 inference_kwargs=inference_kwargs,
+                get_generative_input_kwargs=get_generative_input_kwargs,
                 compute_loss=False,
             )
             norm_abuns.append(generative_outputs["x_norm"].squeeze().cpu())
@@ -368,6 +416,7 @@ class PROTVI(
             batch_size=batch_size,
         )
 
+        # we assume the data is already log-normalized.
         def change_fn(a, b):
             return a - b
 
@@ -393,6 +442,8 @@ class PROTVI(
             silent=silent,
             **kwargs,
         )
+
+        # @TODO: rename result columns containing "_de_" to "_da_"?
 
         return result
 

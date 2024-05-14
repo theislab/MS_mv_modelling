@@ -660,7 +660,7 @@ class PROTVAE(BaseModuleClass):
             "library": library,
         }
 
-    def _get_generative_input(self, tensors, inference_outputs):
+    def _get_generative_input(self, tensors, inference_outputs, transform_batch=None):
         z = inference_outputs["z"]
         size_factor = inference_outputs["library"]
 
@@ -672,6 +672,9 @@ class PROTVAE(BaseModuleClass):
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        if transform_batch is not None:
+            batch_index = torch.ones_like(batch_index) * transform_batch
 
         return {
             "x": x,
