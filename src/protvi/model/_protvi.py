@@ -275,7 +275,7 @@ class PROTVI(
         transform_batch: str | int | None = None,
         # gene_list: list[str] | None = None,
         # library_size: float | Literal["latent"] = 1,
-        n_samples: int = 1,  # @TODO: make test
+        n_samples: int = 1,
         n_samples_overall: int = None,
         # weights: Literal["uniform", "importance"] | None = None,
         batch_size: int | None = None,
@@ -298,9 +298,9 @@ class PROTVI(
 
             - None, then real observed batch is used
             - int, then batch transform_batch is used
-        gene_list
-            Return frequencies of expression for a subset of genes.
-            This can save memory when working with large datasets and few genes are
+        protein_list
+            Return frequencies of expression for a subset of proteins.
+            This can save memory when working with large datasets and few proteins are
             of interest.
         n_samples
             Number of posterior samples to use for estimation.
@@ -320,12 +320,12 @@ class PROTVI(
         Returns
         -------
         If `n_samples` is provided and `return_mean` is False,
-        this method returns a 3d tensor of shape (n_samples, n_cells, n_genes).
+        this method returns a 3d tensor of shape (n_samples, n_cells, n_proteins).
         If `n_samples` is provided and `return_mean` is True, it returns a 2d tensor
-        of shape (n_cells, n_genes).
+        of shape (n_cells, n_proteins).
         In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         Otherwise, the method expects `n_samples_overall` to be provided and returns a 2d tensor
-        of shape (n_samples_overall, n_genes).
+        of shape (n_samples_overall, n_proteins).
 
         """
         adata = self._validate_anndata(adata)
@@ -338,7 +338,9 @@ class PROTVI(
 
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
-        transform_batch = _get_batch_code_from_category(self.get_anndata_manager(adata, required=True), transform_batch)
+        transform_batch = _get_batch_code_from_category(
+            self.get_anndata_manager(adata, required=True), transform_batch
+        )[0]
 
         if n_samples > 1 and return_mean is False:
             if return_numpy is False:
@@ -350,10 +352,10 @@ class PROTVI(
                 )
             return_numpy = True
 
-        norm_abuns = []
+        norm_abuns_ = []
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
-            get_generative_input_kwargs = {"transform_batch": transform_batch[0]}
+            get_generative_input_kwargs = {"transform_batch": transform_batch}
             generative_kwargs = {"use_x_mix": False}
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,
@@ -362,10 +364,10 @@ class PROTVI(
                 get_generative_input_kwargs=get_generative_input_kwargs,
                 compute_loss=False,
             )
-            norm_abuns.append(generative_outputs["x_norm"].squeeze().cpu())
+            norm_abuns_.append(generative_outputs["x_norm"].squeeze().cpu())
 
         cell_axis = 1 if n_samples > 1 else 0
-        norm_abuns = np.concatenate(norm_abuns, axis=cell_axis)
+        norm_abuns = np.concatenate(norm_abuns_, axis=cell_axis)
 
         if n_samples_overall is not None:
             norm_abuns = norm_abuns.reshape(-1, norm_abuns.shape[-1])

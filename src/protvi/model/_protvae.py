@@ -135,9 +135,12 @@ class ConjunctionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-
         cat_list
             list of category membership(s) for this sample
+        x_data
+            unused
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -225,8 +228,12 @@ class HybridDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
+        x_data
+            if set, use x_data instead of x_mean as input for the detection probability
         cat_list
             list of category membership(s) for this sample
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -322,7 +329,11 @@ class SelectionDecoderPROTVI(nn.Module):
         z
             tensor with shape ``(n_input,)``
         cat_list
-            list of category membership(s) for this sample
+            list of category membership(s) for this
+        x_data
+            if set, use x_data instead of x_mean as input for the detection probability
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -756,9 +767,9 @@ class PROTVAE(BaseModuleClass):
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
-        x = generative_outputs["x"]
-        m = x != 0
-        x_mix = x * m + x_mean * ~m
+        # x = generative_outputs["x"]
+        # m = x != 0
+        # x_mix = x * m + x_mean * ~m
 
         # if self.encode_norm_factors:
         #      px = Normal(loc=(x_mean - size_factor), scale=torch.sqrt(x_var))
