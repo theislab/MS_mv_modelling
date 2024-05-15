@@ -394,8 +394,8 @@ class PROTVI(
         batchid2: list[str] | None = None,
         fdr_target: float = 0.05,
         silent: bool = False,
-        # weights: Literal["uniform", "importance"] | None = "uniform",
-        # filter_outlier_cells: bool = False,
+        weights: Literal["uniform", "importance"] | None = "uniform",
+        filter_outlier_cells: bool = False,
         # importance_weighting_kwargs: dict | None = None,
         **kwargs,
     ) -> pd.DataFrame:
@@ -407,7 +407,9 @@ class PROTVI(
             return_numpy=True,
             n_samples=1,
             batch_size=batch_size,
+            weights=weights,
         )
+        representation_fn = self.get_latent_representation if filter_outlier_cells else None
 
         # we assume the data is already log-normalized.
         def change_fn(a, b):
@@ -416,7 +418,7 @@ class PROTVI(
         result = _de_core(
             adata_manager=self.get_anndata_manager(adata, required=True),
             model_fn=model_fn,
-            representation_fn=None,
+            representation_fn=representation_fn,
             groupby=groupby,
             group1=group1,
             group2=group2,
