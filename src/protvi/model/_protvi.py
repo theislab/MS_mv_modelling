@@ -15,6 +15,7 @@ from scvi.data.fields import (
     LayerField,
     NumericalJointObsField,
 )
+from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
 from scvi.model.base._utils import _de_core
@@ -54,12 +55,21 @@ def scprotein_raw_counts_properties(
     data = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
     data1 = data[idx1]
     data2 = data[idx2]
+
     if var_idx is not None:
         data1 = data1[:, var_idx]
         data2 = data2[:, var_idx]
-    mean1 = np.asarray((data1 > 0).mean(axis=0)).ravel()
-    mean2 = np.asarray((data2 > 0).mean(axis=0)).ravel()
-    properties = {"emp_mean1": mean1, "emp_mean2": mean2, "emp_effect": (mean1 - mean2)}
+
+    mask1 = data1 != 0
+    mask2 = data2 != 0
+
+    non_nan1 = np.asarray((mask1).mean(axis=0)).ravel()
+    non_nan2 = np.asarray((mask2).mean(axis=0)).ravel()
+
+    properties = {
+        "non_nan_proportion1": non_nan1,
+        "non_nan_proportion2": non_nan2,
+    }
     return properties
 
 
@@ -337,7 +347,10 @@ class PROTVI(
                 )
             return_numpy = True
 
+        store_distributions = weights == "importance"
+
         norm_abuns_ = []
+        qz_store = DistributionConcatenator()
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
             get_generative_input_kwargs = {"transform_batch": transform_batch}
@@ -351,6 +364,9 @@ class PROTVI(
             )
             norm_abuns_.append(generative_outputs["x_norm"].squeeze().cpu())
 
+            if store_distributions:
+                qz_store.store_distribution(inference_outputs["qz"])
+
         cell_axis = 1 if n_samples > 1 else 0
         norm_abuns = np.concatenate(norm_abuns_, axis=cell_axis)
 
@@ -361,8 +377,23 @@ class PROTVI(
             if (weights is None) or weights == "uniform":
                 p = None
             else:
-                p = None
                 # @TODO: importance sampling
+                p = None
+
+                # 1. compute q(z | z in C) := 1/N sum q(z|x_n)
+                # 2. sample w1 samples from z_c ~ q(z_c | z in C)
+                # 3. estimate p()
+
+                """
+                qz = qz_store.get_concatenated_distributions()
+                z = qz.sample(torch.Size([indices.shape[0]]))
+                x = self.module.sample(z, n_samples=30)
+                mask, pz, px, pm = None, None, None, None
+                log_weights = self.module._get_log_importance_weights(x, z, mask, mask, qz, pz, px, pm)
+                log_probs = log_weights - log_weights.logsumexp(dim=0)
+                p = log_probs.exp().cpu().numpy()
+                """
+
             ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
             norm_abuns = norm_abuns[ind_]
         elif n_samples > 1 and return_mean:
