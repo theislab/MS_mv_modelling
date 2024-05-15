@@ -478,6 +478,7 @@ class PROTVI(
                 },
                 inplace=True,
             )
+            result.drop(columns="pseudocounts", inplace=True)
 
         return result
 
