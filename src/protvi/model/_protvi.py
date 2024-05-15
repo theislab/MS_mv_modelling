@@ -469,7 +469,15 @@ class PROTVI(
             **kwargs,
         )
 
-        # @TODO: rename result columns containing "_de_" to "_da_"?
+        if mode == "change":
+            result.rename(
+                columns={
+                    "proba_de": "proba_da",
+                    "proba_not_de": "proba_not_da",
+                    f"is_de_fdr_{fdr_target}": f"is_da_fdr_{fdr_target}",
+                },
+                inplace=True,
+            )
 
         return result
 
