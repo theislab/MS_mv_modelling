@@ -135,9 +135,12 @@ class ConjunctionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-
         cat_list
             list of category membership(s) for this sample
+        x_data
+            unused
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -146,11 +149,9 @@ class ConjunctionDecoderPROTVI(nn.Module):
 
         """
         # z -> px
-        h = self.h_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(h)
-        # x_mean *= size_factor
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
+        x_mean = x_norm + size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -162,7 +163,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         # z -> p
         m_prob = self.m_prob_decoder(h)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         weight = self.m_logit.weight.detach().cpu().numpy()
@@ -227,8 +228,12 @@ class HybridDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
+        x_data
+            if set, use x_data instead of x_mean as input for the detection probability
         cat_list
             list of category membership(s) for this sample
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -237,10 +242,9 @@ class HybridDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        h = self.h_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(h)
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
+        x_mean = x_norm + size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -262,7 +266,7 @@ class HybridDecoderPROTVI(nn.Module):
 
         m_prob = torch.sigmoid(z_p + x_p)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         return None, None
@@ -294,7 +298,7 @@ class SelectionDecoderPROTVI(nn.Module):
             **kwargs,
         )
 
-        self.x_mean_decoder = nn.Linear(n_hidden, n_output)
+        self.x_norm_decoder = nn.Linear(n_hidden, n_output)
 
         if self.x_variance == "protein-cell":
             self.x_var_decoder = nn.Linear(n_hidden, n_output)
@@ -326,6 +330,10 @@ class SelectionDecoderPROTVI(nn.Module):
             tensor with shape ``(n_input,)``
         cat_list
             list of category membership(s) for this sample
+        x_data
+            if set, use x_data instead of x_mean as input for the detection probability
+        size_factor
+            normalization factor
 
         Returns
         -------
@@ -334,13 +342,12 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        x_h = self.x_decoder(z, *cat_list)
-        x_mean = self.x_mean_decoder(x_h)
-        x_mean = x_mean - size_factor
-        x_mean = torch.squeeze(x_mean)
+        h = self.x_decoder(z, *cat_list)
+        x_norm = self.x_norm_decoder(h).squeeze()
+        x_mean = x_norm + size_factor
 
         if self.x_variance == "protein-cell":
-            x_var = self.x_var_decoder(x_h)
+            x_var = self.x_var_decoder(h)
         elif self.x_variance == "protein":
             x_var = self.x_var.expand(x_mean.shape)
 
@@ -355,7 +362,7 @@ class SelectionDecoderPROTVI(nn.Module):
 
         m_prob = self.m_prob_decoder(x_mix)
 
-        return x_mean, x_var, m_prob
+        return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
         weight = self.m_logit.weight.detach().cpu().numpy()
@@ -664,7 +671,7 @@ class PROTVAE(BaseModuleClass):
             "library": library,
         }
 
-    def _get_generative_input(self, tensors, inference_outputs):
+    def _get_generative_input(self, tensors, inference_outputs, transform_batch=None):
         z = inference_outputs["z"]
         size_factor = inference_outputs["library"]
 
@@ -676,6 +683,9 @@ class PROTVAE(BaseModuleClass):
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        if transform_batch is not None:
+            batch_index = torch.ones_like(batch_index) * transform_batch
 
         return {
             "x": x,
@@ -733,18 +743,20 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
+        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
+        x_norm = x_norm.view(unpacked_shape)
         x_mean = x_mean.view(unpacked_shape)
         x_var = x_var.view(unpacked_shape)
         m_prob = m_prob.view(unpacked_shape)
 
         return {
+            "x": x,
+            "x_norm": x_norm,
             "x_mean": x_mean,
             "x_var": x_var,
             "m_prob": m_prob,
-            "x": x,
         }
 
     def _get_distributions(self, inference_outputs, generative_outputs):
@@ -755,9 +767,9 @@ class PROTVAE(BaseModuleClass):
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
         m_prob = generative_outputs["m_prob"]
-        x = generative_outputs["x"]
-        m = x != 0
-        x_mix = x * m + x_mean * ~m
+        # x = generative_outputs["x"]
+        # m = x != 0
+        # x_mix = x * m + x_mean * ~m
 
         # if self.encode_norm_factors:
         #      px = Normal(loc=(x_mean - size_factor), scale=torch.sqrt(x_var))
@@ -822,16 +834,16 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
-        lpx = mask * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(mask)
+        log_px = mask * px.log_prob(x)
+        log_pm = mechanism_weight * pm.log_prob(mask)
 
-        ll = scoring_mask * (lpx + lpm)
+        log_obs = scoring_mask * (log_px + log_pm)
 
-        # average over samples, (n_samples, n_batch, n_features) -> (n_batch, n_features)
-        lpd = ll.sum(dim=0)
+        # (n_samples, n_batch, n_features) -> (n_batch, n_features)
+        log_pd = log_obs.sum(dim=0)
 
-        # sum over features: (n_batch, n_features) -> (n_batch,)
-        reconstruction_loss = -lpd.sum(dim=-1)
+        # (n_batch, n_features) -> (n_batch,)
+        reconstruction_loss = -log_pd.sum(dim=-1)
 
         ## KL
         # (n_batch, n_latent) -> (n_batch,)
@@ -843,20 +855,20 @@ class PROTVAE(BaseModuleClass):
 
         return LossOutput(loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl)
 
-    def _get_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
-        lpx = mask * px.log_prob(x)
-        lpm = mechanism_weight * pm.log_prob(mask)
+    def _get_log_importance_weights(self, x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight=1.0):
+        log_px = mask * px.log_prob(x)
+        log_pm = mechanism_weight * pm.log_prob(mask)
 
-        ll = scoring_mask * (lpx + lpm)
+        log_obs = scoring_mask * (log_px + log_pm)
 
-        # sum over features: (n_samples, n_batch, n_features) -> (n_samples, n_batch)
-        ll = ll.sum(dim=-1)
-        lpz = pz.log_prob(z).sum(dim=-1)
-        lqz = qz.log_prob(z).sum(dim=-1)
+        # (n_samples, n_batch, n_features) -> (n_samples, n_batch)
+        log_obs = log_obs.sum(dim=-1)
+        log_pz = pz.log_prob(z).sum(dim=-1)
+        log_qz = qz.log_prob(z).sum(dim=-1)
 
-        lw = ll + lpz - lqz
+        log_weights = log_obs + log_pz - log_qz
 
-        return lw
+        return log_weights
 
     def _iwae_loss(
         self,
@@ -871,12 +883,15 @@ class PROTVAE(BaseModuleClass):
         mechanism_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
-        lw = self._get_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
+        log_weights = self._get_log_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
 
-        # sum over samples: (n_samples, n_batch) -> (n_batch,)
-        lw_sum = lw.logsumexp(dim=0) - np.log(lw.size(0))
+        # (n_samples, n_batch) -> (n_batch,)
+        log_weight_sum = log_weights.logsumexp(dim=0)
 
-        loss = -lw_sum.mean()
+        # Truncated Importance Sampling
+        log_weight_sum -= np.log(log_weights.size(0))
+
+        loss = -log_weight_sum.mean()
 
         return LossOutput(loss=loss, n_obs_minibatch=x.size(0))
 

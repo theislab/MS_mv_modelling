@@ -1,11 +1,13 @@
 import logging
-from collections.abc import Sequence
+import warnings
+from functools import partial
 from typing import Literal, Optional
 
 import numpy as np
+import pandas as pd
 import torch
 from anndata import AnnData
-from scvi import REGISTRY_KEYS
+from scvi import REGISTRY_KEYS, settings
 from scvi.data import AnnDataManager
 from scvi.data.fields import (
     CategoricalJointObsField,
@@ -13,13 +15,62 @@ from scvi.data.fields import (
     LayerField,
     NumericalJointObsField,
 )
+from scvi.distributions._utils import DistributionConcatenator
+from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import BaseModelClass, UnsupervisedTrainingMixin, VAEMixin
+from scvi.model.base._utils import _de_core
 from torch import nn as nn
 
 from ._constants import EXTRA_KEYS
 from ._protvae import PROTVAE
 
 logger = logging.getLogger(__name__)
+
+
+def scprotein_raw_counts_properties(
+    adata_manager: AnnDataManager,
+    idx1: list[int] | np.ndarray,
+    idx2: list[int] | np.ndarray,
+    var_idx: Optional[list[int] | np.ndarray] = None,
+) -> dict[str, np.ndarray]:
+    """Computes and returns some statistics on the raw counts of two sub-populations.
+
+    Parameters
+    ----------
+    adata_manager
+        :class:`~scvi.data.AnnDataManager` object setup with :class:`~scvi.model.SCVI`.
+    idx1
+        subset of indices describing the first population.
+    idx2
+        subset of indices describing the second population.
+    var_idx
+        subset of variables to extract properties from. if None, all variables are used.
+
+    Returns
+    -------
+    type
+        Dict of ``np.ndarray`` containing, by pair (one for each sub-population).
+
+    """
+    data = adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+    data1 = data[idx1]
+    data2 = data[idx2]
+
+    if var_idx is not None:
+        data1 = data1[:, var_idx]
+        data2 = data2[:, var_idx]
+
+    mask1 = data1 != 0
+    mask2 = data2 != 0
+
+    non_nan1 = np.asarray((mask1).mean(axis=0)).ravel()
+    non_nan2 = np.asarray((mask2).mean(axis=0)).ravel()
+
+    properties = {
+        "non_nan_proportion1": non_nan1,
+        "non_nan_proportion2": non_nan2,
+    }
+    return properties
 
 
 class PROTVI(
@@ -33,25 +84,19 @@ class PROTVI(
     ----------
     adata:
         AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
-
     n_hidden:
         Number of nodes per hidden layer.
-
     n_latent:
         Dimensionality of the latent space.
-
     n_layers:
         Number of hidden layers used for encoder and decoder NNs.
-
     dropout_rate:
         Dropout rate for neural networks.
-
     latent_distribution:
         One of:
 
         * ``'normal'`` - Normal distribution
         * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
-
     log_variational
         Log(data+1) prior to encoding for numerical stability. Not normalization.
 
@@ -121,7 +166,7 @@ class PROTVI(
     def impute(
         self,
         adata: Optional[AnnData] = None,
-        indices: Optional[Sequence[int]] = None,
+        indices: Optional[list[int] | np.ndarray] = None,
         n_samples: Optional[int] = None,
         batch_size: int = 32,
         loss_type: Optional[Literal["elbo", "iwae"]] = None,
@@ -134,22 +179,16 @@ class PROTVI(
         adata
             AnnData object with equivalent structure to initial AnnData
             If None, defaults to the AnnData object used to initialize the model
-
         indices
             Indices of cells to use for imputation
-
         batch_size
             Batch size to use for imputation
-
         loss_type
             Loss type to use for imputation
-
         replace_with_obs
             Whether to replace the imputated values with the observed values
-
         n_samples
             number of samples to use for IWAE estimate
-
 
         Returns
         -------
@@ -160,7 +199,7 @@ class PROTVI(
         adata = self._validate_anndata(adata)
 
         if indices is None:
-            indices = np.arange(adata.n_obs)  # type: ignore
+            indices = np.arange(adata.n_obs)
 
         scdl = self._make_data_loader(
             adata=adata,
@@ -195,20 +234,18 @@ class PROTVI(
                 x = tensors[REGISTRY_KEYS.X_KEY].to(inference_outputs["z"].device)
                 mask = (x != 0).type(torch.float32)
                 scoring_mask = mask
-                lw = self.module._get_importance_weights(
+                log_weights = self.module._get_log_importance_weights(
                     x,
                     inference_outputs["z"],
                     mask,
                     scoring_mask,
                     **distributions,
                 )
-                lw = lw.cpu().numpy()
+                log_probs = log_weights - log_weights.logsumexp(dim=0)
+                probs = log_probs.exp().cpu().numpy()
 
-                e_x = np.exp(lw - np.max(lw, axis=0))
-                w = e_x / np.sum(e_x, axis=0)
-
-                x_imp = np.sum(x_mean * w[..., None], axis=0)
-                p_imp = np.sum(m_prob * w[..., None], axis=0)
+                x_imp = np.sum(x_mean * probs[..., None], axis=0)
+                p_imp = np.sum(m_prob * probs[..., None], axis=0)
             else:
                 raise ValueError(f"Invalid loss type: {loss_type}")
 
@@ -224,6 +261,226 @@ class PROTVI(
             xs = x_data * m + xs * ~m
 
         return xs, ps
+
+    @torch.inference_mode()
+    def get_normalized_abundance(
+        self,
+        adata: AnnData | None = None,
+        indices: list[int] | np.ndarray | None = None,
+        transform_batch: str | int | None = None,
+        # gene_list: list[str] | None = None,
+        # library_size: float | Literal["latent"] = 1,
+        n_samples: int = 1,
+        n_samples_overall: int = None,
+        weights: Literal["uniform", "importance"] | None = None,
+        batch_size: int | None = None,
+        return_mean: bool = True,
+        return_numpy: bool | None = None,
+        # **importance_weighting_kwargs,
+    ) -> np.ndarray | pd.DataFrame:
+        r"""Returns the normalized (decoded) protein abundance.
+
+        Parameters
+        ----------
+        adata
+            AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
+            AnnData object used to initialize the model.
+        indices
+            Indices of cells in adata to use. If `None`, all cells are used.
+        transform_batch
+            Batch to condition on.
+            If transform_batch is:
+
+            - None, then real observed batch is used
+            - int, then batch transform_batch is used
+        protein_list
+            Return frequencies of expression for a subset of proteins.
+            This can save memory when working with large datasets and few proteins are
+            of interest.
+        n_samples
+            Number of posterior samples to use for estimation.
+        n_samples_overall
+            Number of posterior samples to use for estimation. Overrides `n_samples`.
+        weights
+            Weights to use for sampling. If `None`, defaults to `"uniform"`.
+        batch_size
+            Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        return_mean
+            Whether to return the mean of the samples.
+        return_numpy
+            Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame
+            includes gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults
+            to `False`. Otherwise, it defaults to `True`.
+
+        Returns
+        -------
+        If `n_samples` is provided and `return_mean` is False,
+        this method returns a 3d tensor of shape (n_samples, n_cells, n_proteins).
+        If `n_samples` is provided and `return_mean` is True, it returns a 2d tensor
+        of shape (n_cells, n_proteins).
+        In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        Otherwise, the method expects `n_samples_overall` to be provided and returns a 2d tensor
+        of shape (n_samples_overall, n_proteins).
+
+        """
+        adata = self._validate_anndata(adata)
+
+        if indices is None:
+            indices = np.arange(adata.n_obs)
+        if n_samples_overall is not None:
+            assert n_samples == 1  # default value
+            n_samples = n_samples_overall // len(indices) + 1
+
+        scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+
+        transform_batch = _get_batch_code_from_category(
+            self.get_anndata_manager(adata, required=True), transform_batch
+        )[0]
+
+        if n_samples > 1 and return_mean is False:
+            if return_numpy is False:
+                warnings.warn(
+                    "`return_numpy` must be `True` if `n_samples > 1` and `return_mean` "
+                    "is`False`, returning an `np.ndarray`.",
+                    UserWarning,
+                    stacklevel=settings.warnings_stacklevel,
+                )
+            return_numpy = True
+
+        store_distributions = weights == "importance"
+
+        norm_abuns_ = []
+        qz_store = DistributionConcatenator()
+        for tensors in scdl:
+            inference_kwargs = {"n_samples": n_samples}
+            get_generative_input_kwargs = {"transform_batch": transform_batch}
+            generative_kwargs = {"use_x_mix": False}
+            inference_outputs, generative_outputs = self.module.forward(
+                tensors=tensors,
+                generative_kwargs=generative_kwargs,
+                inference_kwargs=inference_kwargs,
+                get_generative_input_kwargs=get_generative_input_kwargs,
+                compute_loss=False,
+            )
+            norm_abuns_.append(generative_outputs["x_norm"].squeeze().cpu())
+
+            if store_distributions:
+                qz_store.store_distribution(inference_outputs["qz"])
+
+        cell_axis = 1 if n_samples > 1 else 0
+        norm_abuns = np.concatenate(norm_abuns_, axis=cell_axis)
+
+        if n_samples_overall is not None:
+            norm_abuns = norm_abuns.reshape(-1, norm_abuns.shape[-1])
+            n_samples_ = norm_abuns.shape[0]
+
+            if (weights is None) or weights == "uniform":
+                p = None
+            else:
+                # @TODO: importance sampling
+                p = None
+
+                # 1. compute q(z | z in C) := 1/N sum q(z|x_n)
+                # 2. sample w1 samples from z_c ~ q(z_c | z in C)
+                # 3. estimate p()
+
+                """
+                qz = qz_store.get_concatenated_distributions()
+                z = qz.sample(torch.Size([indices.shape[0]]))
+                x = self.module.sample(z, n_samples=30)
+                mask, pz, px, pm = None, None, None, None
+                log_weights = self.module._get_log_importance_weights(x, z, mask, mask, qz, pz, px, pm)
+                log_probs = log_weights - log_weights.logsumexp(dim=0)
+                p = log_probs.exp().cpu().numpy()
+                """
+
+            ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
+            norm_abuns = norm_abuns[ind_]
+        elif n_samples > 1 and return_mean:
+            norm_abuns = norm_abuns.mean(0)
+
+        if (return_numpy is None) or (return_numpy is False):
+            return pd.DataFrame(
+                norm_abuns,
+                columns=adata.var_names,
+                index=adata.obs_names[indices],
+            )
+        else:
+            return norm_abuns
+
+    def differential_abundance(
+        self,
+        adata: AnnData | None = None,
+        groupby: str | None = None,
+        group1: list[str] | None = None,
+        group2: str | None = None,
+        idx1: list[int] | list[bool] | str | None = None,
+        idx2: list[int] | list[bool] | str | None = None,
+        mode: Literal["vanilla", "change"] = "change",
+        delta: float = 0.25,
+        batch_size: int | None = None,
+        all_stats: bool = True,
+        batch_correction: bool = False,
+        batchid1: list[str] | None = None,
+        batchid2: list[str] | None = None,
+        fdr_target: float = 0.05,
+        silent: bool = False,
+        weights: Literal["uniform", "importance"] | None = "uniform",
+        filter_outlier_cells: bool = False,
+        # importance_weighting_kwargs: dict | None = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        adata = self._validate_anndata(adata)
+        col_names = adata.var_names
+
+        model_fn = partial(
+            self.get_normalized_abundance,
+            return_numpy=True,
+            n_samples=1,
+            batch_size=batch_size,
+            weights=weights,
+        )
+        representation_fn = self.get_latent_representation if filter_outlier_cells else None
+
+        # we assume the data is already log-normalized.
+        def change_fn(a, b):
+            return a - b
+
+        result = _de_core(
+            adata_manager=self.get_anndata_manager(adata, required=True),
+            model_fn=model_fn,
+            representation_fn=representation_fn,
+            groupby=groupby,
+            group1=group1,
+            group2=group2,
+            idx1=idx1,
+            idx2=idx2,
+            mode=mode,
+            delta=delta,
+            all_stats=all_stats,
+            all_stats_fn=scprotein_raw_counts_properties,
+            batch_correction=batch_correction,
+            batchid1=batchid1,
+            batchid2=batchid2,
+            col_names=col_names,
+            fdr=fdr_target,
+            change_fn=change_fn,
+            silent=silent,
+            **kwargs,
+        )
+
+        if mode == "change":
+            result.rename(
+                columns={
+                    "proba_de": "proba_da",
+                    "proba_not_de": "proba_not_da",
+                    f"is_de_fdr_{fdr_target}": f"is_da_fdr_{fdr_target}",
+                },
+                inplace=True,
+            )
+            result.drop(columns="pseudocounts", inplace=True)
+
+        return result
 
     @classmethod
     def setup_anndata(
@@ -244,28 +501,20 @@ class PROTVI(
         ----------
         adata
             AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
-
         layer
             Name of the layer for which to extract the data.
-
         batch_key
             Key in ``adata.obs`` for batches/cell types/categories.
-
         categorical_covariate_keys
             List of keys in ``adata.obs`` for categorical covariates.
-
         continuous_covariate_keys
             List of keys in ``adata.obs`` for continuous covariates.
-
         prior_categorical_covariate_keys
             List of keys in ``adata.obs`` for prior categorical covariates. batch_key is *not* automatically added for prior covariates.
-
         prior_continuous_covariate_keys
             List of keys in ``adata.obs`` for prior continuous covariates.
-
         norm_continuous_covariate_keys
             List of keys in ``adata.obs`` for normalized continuous covariates.
-
         **kwargs
             Keyword args for AnnDataManager.register_fields
 
