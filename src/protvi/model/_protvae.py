@@ -151,7 +151,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         # z -> px
         h = self.x_decoder(z, *cat_list)
         x_norm = self.x_norm_decoder(h).squeeze()
-        x_mean = x_norm + size_factor
+        x_mean = x_norm - size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
