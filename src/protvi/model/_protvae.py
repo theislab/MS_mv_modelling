@@ -244,7 +244,7 @@ class HybridDecoderPROTVI(nn.Module):
         # z -> x
         h = self.x_decoder(z, *cat_list)
         x_norm = self.x_norm_decoder(h).squeeze()
-        x_mean = x_norm + size_factor
+        x_mean = x_norm - size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -344,7 +344,7 @@ class SelectionDecoderPROTVI(nn.Module):
         # z -> x
         h = self.x_decoder(z, *cat_list)
         x_norm = self.x_norm_decoder(h).squeeze()
-        x_mean = x_norm + size_factor
+        x_mean = x_norm - size_factor
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
@@ -467,6 +467,7 @@ class PROTVAE(BaseModuleClass):
     ):
         super().__init__()
         self.n_latent = n_latent
+        self.n_batch = n_batch
         self.log_variational = log_variational
         self.x_variance = x_variance
         self.latent_distribution = latent_distribution
@@ -560,7 +561,8 @@ class PROTVAE(BaseModuleClass):
             return_dist=True,
         )
 
-        self.size_factor = nn.Parameter(torch.randn(n_input))
+        # self.size_factor = nn.Parameter(torch.randn(n_input))
+        self.size_factor = nn.Parameter(torch.randn(n_input, n_batch))
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -662,7 +664,8 @@ class PROTVAE(BaseModuleClass):
         elif self.csf_offset:
             library = norm_continous_input
         else:
-            library = self.size_factor
+            # library = self.size_factor
+            library = F.linear(one_hot(batch_index, self.n_batch), self.size_factor)
 
         return {
             "pz": pz,
