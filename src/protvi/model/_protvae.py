@@ -15,7 +15,10 @@ from scvi.nn import (
     FCLayers,
 )
 from torch import nn as nn
+import torch.nn.functional as F
 from torch.distributions import Bernoulli, Normal, kl_divergence
+
+from scvi.nn import one_hot
 
 from ._constants import EXTRA_KEYS
 
@@ -149,8 +152,8 @@ class ConjunctionDecoderPROTVI(nn.Module):
 
         """
         # z -> px
-        h = self.x_decoder(z, *cat_list)
-        x_norm = self.x_norm_decoder(h).squeeze()
+        h = self.h_decoder(z, *cat_list)
+        x_norm = self.x_mean_decoder(h).squeeze()
         x_mean = x_norm - size_factor
 
         if self.x_variance == "protein-cell":
@@ -242,8 +245,8 @@ class HybridDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        h = self.x_decoder(z, *cat_list)
-        x_norm = self.x_norm_decoder(h).squeeze()
+        h = self.h_decoder(z, *cat_list)
+        x_norm = self.x_mean_decoder(h).squeeze()
         x_mean = x_norm - size_factor
 
         if self.x_variance == "protein-cell":
