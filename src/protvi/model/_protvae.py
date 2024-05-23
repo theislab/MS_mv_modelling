@@ -218,10 +218,10 @@ class ConjunctionDecoderPROTVI(nn.Module):
     def forward(
         self,
         z: torch.Tensor,
+        x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         *extra_cat_list: int,
-        **kwargs,
     ):
         """The forward computation for a single sample.
 
@@ -288,7 +288,7 @@ class HybridDecoderPROTVI(nn.Module):
     def forward(
         self,
         z: torch.Tensor,
-        x_data: torch.Tensor,
+        x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         *extra_cat_list: int,
@@ -303,8 +303,8 @@ class HybridDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        x_data
-            if set, use x_data instead of x_mean as input for the detection probability
+        x_obs
+            if set, use x_obs instead of x_mean as input for the detection probability
         cat_list
             list of category membership(s) for this sample
         size_factor
@@ -319,11 +319,11 @@ class HybridDecoderPROTVI(nn.Module):
         x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
 
         # x_mix
-        if x_data is None:
+        if x_obs is None:
             x_mix = x_mean
         else:
-            m = x_data != 0
-            x_mix = x_data * m + x_mean * ~m
+            m = x_obs != 0
+            x_mix = x_obs * m + x_mean * ~m
 
         z_p = self.z_p(h)
         x_p = self.x_p(x_mix)
@@ -374,11 +374,10 @@ class SelectionDecoderPROTVI(nn.Module):
     def forward(
         self,
         z: torch.Tensor,
-        x_data: torch.Tensor,
+        x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         *extra_cat_list: int,
-        **kwargs,
     ):
         """The forward computation for a single sample.
 
@@ -391,8 +390,8 @@ class SelectionDecoderPROTVI(nn.Module):
             tensor with shape ``(n_input,)``
         cat_list
             list of category membership(s) for this sample
-        x_data
-            if set, use x_data instead of x_mean as input for the detection probability
+        x_obs
+            if set, use x_obs instead of x_mean as input for the detection probability
         size_factor
             normalization factor
 
@@ -406,11 +405,11 @@ class SelectionDecoderPROTVI(nn.Module):
         x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
 
         # x_mix
-        if x_data is None:
+        if x_obs is None:
             x_mix = x_mean
         else:
-            m = x_data != 0
-            x_mix = x_data * m + x_mean * ~m
+            m = x_obs != 0
+            x_mix = x_obs * m + x_mean * ~m
 
         m_prob = self.m_prob_decoder(x_mix)
 

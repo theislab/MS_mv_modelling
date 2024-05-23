@@ -260,9 +260,9 @@ class PROTVI(
         ps = np.concatenate(ps_list, axis=0)
 
         if replace_with_obs:
-            x_data = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
-            m = x_data != 0
-            xs = x_data * m + xs * ~m
+            x_obs = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+            m = x_obs != 0
+            xs = x_obs * m + xs * ~m
 
         return xs, ps
 
