@@ -1,7 +1,7 @@
 import logging
 import warnings
 from functools import partial
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -31,7 +31,7 @@ def scprotein_raw_counts_properties(
     adata_manager: AnnDataManager,
     idx1: list[int] | np.ndarray,
     idx2: list[int] | np.ndarray,
-    var_idx: Optional[list[int] | np.ndarray] = None,
+    var_idx: list[int] | np.ndarray = None,
 ) -> dict[str, np.ndarray]:
     """Computes and returns some statistics on the raw counts of two sub-populations.
 
@@ -114,10 +114,12 @@ class PROTVI(
         log_variational: bool = True,
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
+        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
+        n_embedding_for_batch: int = None,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
-        use_x_mix=False,
-        encode_norm_factors=False,
+        use_x_mix: bool = False,
+        encode_norm_factors: bool = False,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -149,6 +151,8 @@ class PROTVI(
             log_variational=log_variational,
             decoder_type=decoder_type,
             loss_type=loss_type,
+            batch_embedding_type=batch_embedding_type,
+            n_embedding_for_batch=n_embedding_for_batch,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
             use_x_mix=use_x_mix,
@@ -165,11 +169,11 @@ class PROTVI(
     @torch.inference_mode()
     def impute(
         self,
-        adata: Optional[AnnData] = None,
-        indices: Optional[list[int] | np.ndarray] = None,
-        n_samples: Optional[int] = None,
+        adata: AnnData = None,
+        indices: list[int] | np.ndarray = None,
+        n_samples: int = None,
         batch_size: int = 32,
-        loss_type: Optional[Literal["elbo", "iwae"]] = None,
+        loss_type: Literal["elbo", "iwae"] = None,
         replace_with_obs: bool = False,
     ):
         """Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
@@ -486,13 +490,13 @@ class PROTVI(
     def setup_anndata(
         cls,
         adata: AnnData,
-        layer: Optional[str] = None,
-        batch_key: Optional[str] = None,
-        categorical_covariate_keys: Optional[list[str]] = None,
-        continuous_covariate_keys: Optional[list[str]] = None,
-        prior_continuous_covariate_keys: Optional[list[str]] = None,
-        prior_categorical_covariate_keys: Optional[list[str]] = None,
-        norm_continuous_covariate_keys: Optional[list[str]] = None,
+        layer: str = None,
+        batch_key: str = None,
+        categorical_covariate_keys: list[str] = None,
+        continuous_covariate_keys: list[str] = None,
+        prior_continuous_covariate_keys: list[str] = None,
+        prior_categorical_covariate_keys: list[str] = None,
+        norm_continuous_covariate_keys: list[str] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
