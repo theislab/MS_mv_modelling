@@ -8,7 +8,7 @@ version = "0.0.1"
 #authors = [{name = "EM", email = "me@em.com"}]
 description = "A deep generative model for single-cell MS-based proteomics data."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 dynamic = ["dependencies"]
 
