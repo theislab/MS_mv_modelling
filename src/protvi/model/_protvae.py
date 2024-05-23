@@ -24,6 +24,37 @@ from ._constants import EXTRA_KEYS
 logger = logging.getLogger(__name__)
 
 
+class BatchEncoder(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        use_batch_norm: bool = False,
+        use_layer_norm: bool = False,
+    ):
+        super().__init__()
+        self.n_input = n_input
+        self.batch_encoder = FCLayers(
+            n_in=n_input,
+            n_out=n_output,
+            n_cat_list=None,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=0,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+        )
+
+    def forward(
+        self,
+        batch_index,
+    ):
+        one_hot_batch = one_hot(batch_index, self.n_input)
+        return self.batch_encoder(one_hot_batch)
+
+
 class GlobalLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
         super().__init__()
@@ -90,8 +121,8 @@ class DecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
-        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
-        n_embedding_for_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
         **kwargs,
     ):
         super().__init__()
@@ -99,16 +130,19 @@ class DecoderPROTVI(nn.Module):
         self.x_variance = x_variance
         self.batch_embedding_type = batch_embedding_type
 
+        n_cat_list = list([] if n_extra_cat_list is None else n_extra_cat_list)
+
         if batch_embedding_type == "one-hot":
-            n_cat_list = [n_batch] + list([] if n_extra_cat_list is None else n_extra_cat_list)
+            n_cat_list = [n_batch] + n_cat_list
             h_input = n_input
         elif batch_embedding_type == "embedding":
-            if n_embedding_for_batch is None:
+            h_input = n_input + batch_dim
+            if batch_dim is None:
                 raise ValueError("`n_embedding` must be provided when using batch embedding")
-
-            self.batch_embedding = nn.Embedding(n_batch, n_embedding_for_batch)
-            n_cat_list = list([] if n_extra_cat_list is None else n_extra_cat_list)
-            h_input = n_input + n_embedding_for_batch
+            self.batch_embedding = nn.Embedding(n_batch, batch_dim)
+        elif batch_embedding_type == "encoder":
+            h_input = n_input + batch_dim
+            self.batch_encoder = BatchEncoder(n_input=n_batch, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers)
         else:
             raise ValueError("Invalid batch embedding type")
 
@@ -163,6 +197,10 @@ class DecoderPROTVI(nn.Module):
             cat_list = list(extra_cat_list)
             embed = self.batch_embedding(batch_index).squeeze()
             hz = torch.cat((z, embed), dim=-1)
+        elif self.batch_embedding_type == "encoder":
+            cat_list = list(extra_cat_list)
+            embed = self.batch_encoder(batch_index)
+            hz = torch.cat((z, embed), dim=-1)
         else:
             raise ValueError("Invalid batch embedding type")
 
@@ -205,7 +243,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            n_embedding_for_batch=n_embedding_for_batch,
+            batch_dim=n_embedding_for_batch,
             **kwargs,
         )
 
@@ -277,7 +315,7 @@ class HybridDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            n_embedding_for_batch=n_embedding_for_batch,
+            batch_dim=n_embedding_for_batch,
             **kwargs,
         )
 
@@ -361,7 +399,7 @@ class SelectionDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            n_embedding_for_batch=n_embedding_for_batch,
+            batch_dim=n_embedding_for_batch,
             **kwargs,
         )
 
@@ -507,7 +545,7 @@ class PROTVAE(BaseModuleClass):
         var_activation: Callable = None,
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
-        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         n_embedding_for_batch: int = None,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
