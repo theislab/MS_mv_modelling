@@ -120,6 +120,7 @@ class PROTVI(
         max_loss_dropout: float = 0.0,
         use_x_mix: bool = False,
         encode_norm_factors: bool = False,
+        batch_continous_info: np.ndarray | None = None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -152,13 +153,14 @@ class PROTVI(
             decoder_type=decoder_type,
             loss_type=loss_type,
             batch_embedding_type=batch_embedding_type,
-            n_embedding_for_batch=batch_dim,
+            batch_dim=batch_dim,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
             use_x_mix=use_x_mix,
             encode_norm_factors=encode_norm_factors,
             n_prior_continuous_cov=self.summary_stats.get("n_prior_continuous_covs", 0),
             n_prior_cats_per_cov=n_prior_cats_per_cov,
+            batch_continous_info=torch.tensor(batch_continous_info) if batch_continous_info is not None else None,
             **model_kwargs,
         )
 

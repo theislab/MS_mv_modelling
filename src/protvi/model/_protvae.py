@@ -49,10 +49,9 @@ class BatchEncoder(nn.Module):
 
     def forward(
         self,
-        batch_index,
+        input,
     ):
-        one_hot_batch = one_hot(batch_index, self.n_input)
-        return self.batch_encoder(one_hot_batch)
+        return self.batch_encoder(input)
 
 
 class GlobalLinear(nn.Module):
@@ -123,26 +122,32 @@ class DecoderPROTVI(nn.Module):
         n_batch: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
         **kwargs,
     ):
         super().__init__()
 
         self.x_variance = x_variance
+        self.n_batch = n_batch
         self.batch_embedding_type = batch_embedding_type
+        self.batch_continous_info = batch_continous_info
 
         n_cat_list = list([] if n_extra_cat_list is None else n_extra_cat_list)
 
+        batch_input_dim = batch_continous_info.shape[-1] if batch_continous_info is not None else n_batch
+
         if batch_embedding_type == "one-hot":
-            n_cat_list = [n_batch] + n_cat_list
-            h_input = n_input
+            h_input = n_input + batch_input_dim
         elif batch_embedding_type == "embedding":
             h_input = n_input + batch_dim
             if batch_dim is None:
                 raise ValueError("`n_embedding` must be provided when using batch embedding")
-            self.batch_embedding = nn.Embedding(n_batch, batch_dim)
+            self.batch_embedding = nn.Linear(batch_input_dim, batch_dim, bias=False)
         elif batch_embedding_type == "encoder":
             h_input = n_input + batch_dim
-            self.batch_encoder = BatchEncoder(n_input=n_batch, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers)
+            self.batch_encoder = BatchEncoder(
+                n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
+            )
         else:
             raise ValueError("Invalid batch embedding type")
 
@@ -190,21 +195,23 @@ class DecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
+        if self.batch_continous_info is None:
+            batch_input = one_hot(batch_index, self.n_batch)
+        else:
+            batch_input = self.batch_continous_info[batch_index].squeeze()
+
         if self.batch_embedding_type == "one-hot":
-            cat_list = [batch_index] + list(extra_cat_list)
-            hz = z
+            batch_encoding = batch_input
         elif self.batch_embedding_type == "embedding":
-            cat_list = list(extra_cat_list)
-            embed = self.batch_embedding(batch_index).squeeze()
-            hz = torch.cat((z, embed), dim=-1)
+            batch_encoding = self.batch_embedding(batch_input)
         elif self.batch_embedding_type == "encoder":
-            cat_list = list(extra_cat_list)
-            embed = self.batch_encoder(batch_index)
-            hz = torch.cat((z, embed), dim=-1)
+            batch_encoding = self.batch_encoder(batch_input)
         else:
             raise ValueError("Invalid batch embedding type")
 
-        h = self.h_decoder(hz, *cat_list)
+        hz = torch.cat((z, batch_encoding), dim=-1)
+
+        h = self.h_decoder(hz, *extra_cat_list)
         x_norm = self.x_mean_decoder(h).squeeze()
         x_mean = x_norm - size_factor
 
@@ -228,8 +235,9 @@ class ConjunctionDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
-        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
-        n_embedding_for_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
         **kwargs,
     ):
         super().__init__()
@@ -243,7 +251,8 @@ class ConjunctionDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            batch_dim=n_embedding_for_batch,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
             **kwargs,
         )
 
@@ -300,8 +309,9 @@ class HybridDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
-        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
-        n_embedding_for_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
         **kwargs,
     ):
         super().__init__()
@@ -315,7 +325,8 @@ class HybridDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            batch_dim=n_embedding_for_batch,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
             **kwargs,
         )
 
@@ -384,8 +395,9 @@ class SelectionDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
-        batch_embedding_type: Literal["one-hot", "embedding"] = "one-hot",
-        n_embedding_for_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
         **kwargs,
     ):
         super().__init__()
@@ -399,7 +411,8 @@ class SelectionDecoderPROTVI(nn.Module):
             x_variance=x_variance,
             n_batch=n_batch,
             batch_embedding_type=batch_embedding_type,
-            batch_dim=n_embedding_for_batch,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
             **kwargs,
         )
 
@@ -546,7 +559,7 @@ class PROTVAE(BaseModuleClass):
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
-        n_embedding_for_batch: int = None,
+        batch_dim: int = None,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
         use_x_mix=False,
@@ -555,6 +568,7 @@ class PROTVAE(BaseModuleClass):
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Iterable[int] = None,
         n_norm_continuous_cov: int = 0,  # @TODO: unused
+        batch_continous_info: torch.Tensor = None,
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -632,10 +646,11 @@ class PROTVAE(BaseModuleClass):
             n_hidden=n_hidden,
             x_variance=x_variance,
             batch_embedding_type=batch_embedding_type,
-            n_embedding_for_batch=n_embedding_for_batch,
+            batch_dim=batch_dim,
             inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
+            batch_continous_info=batch_continous_info,
         )
 
         ## Latent prior encoder
