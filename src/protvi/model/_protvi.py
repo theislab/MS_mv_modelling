@@ -120,7 +120,7 @@ class PROTVI(
         max_loss_dropout: float = 0.0,
         use_x_mix: bool = False,
         encode_norm_factors: bool = False,
-        batch_continous_info: np.ndarray | None = None,
+        batch_continous_info: np.ndarray = None,
         **model_kwargs,
     ):
         super().__init__(adata)

@@ -535,6 +535,9 @@ class PROTVAE(BaseModuleClass):
         Number of continuous covariates for the prior.
     n_prior_cats_per_cov
         Number of categories for each extra categorical covariate for the prior.
+    batch_continous_info
+        Information for batch continuous covariates. Assumes that the batch continuous covariates are ordered by batches also sorted by name.
+        See `scvi.data.setup_anndata` for more information on the ordering of batches.
 
     """
 
