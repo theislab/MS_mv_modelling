@@ -2,13 +2,15 @@ protVI
 ======
 A deep generative model for single-cell MS proteomics data.
 
+Quick start
+-----------
 .. code-block:: python
 
     from protvi.model import PROTVI
 
     PROTVI.setup_anndata(adata, batch_key="batch_id")
 
-    model = PROTVI(adata, n_hidden=32)
+    model = PROTVI(adata)
     model.train()
 
 
