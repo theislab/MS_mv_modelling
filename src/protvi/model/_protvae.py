@@ -33,6 +33,7 @@ class BatchEncoder(nn.Module):
         n_hidden: int = 128,
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
+        dropout_rate: float = 0.0,
     ):
         super().__init__()
         self.n_input = n_input
@@ -42,7 +43,7 @@ class BatchEncoder(nn.Module):
             n_cat_list=None,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            dropout_rate=0,
+            dropout_rate=dropout_rate,
             use_batch_norm=use_batch_norm,
             use_layer_norm=use_layer_norm,
         )
@@ -184,10 +185,12 @@ class DecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        cat_list
-            list of category membership(s) for this sample
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
 
         Returns
         -------
@@ -279,10 +282,13 @@ class ConjunctionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        cat_list
-            list of category membership(s) for this sample
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
+
 
         Returns
         -------
@@ -354,10 +360,13 @@ class HybridDecoderPROTVI(nn.Module):
             tensor with shape ``(n_input,)``
         x_obs
             if set, use x_obs instead of x_mean as input for the detection probability
-        cat_list
-            list of category membership(s) for this sample
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
+
 
         Returns
         -------
@@ -439,12 +448,14 @@ class SelectionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        cat_list
-            list of category membership(s) for this sample
         x_obs
             if set, use x_obs instead of x_mean as input for the detection probability
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
 
         Returns
         -------
