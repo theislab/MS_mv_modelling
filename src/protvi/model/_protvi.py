@@ -359,7 +359,7 @@ class PROTVI(
         qz_store = DistributionConcatenator()
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
-            get_generative_input_kwargs = {"transform_batch": transform_batch}
+            get_generative_input_kwargs = {"batch_index_substitute": transform_batch}
             generative_kwargs = {"use_x_mix": False}
             inference_outputs, generative_outputs = self.module.forward(
                 tensors=tensors,

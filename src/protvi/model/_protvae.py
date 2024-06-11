@@ -688,10 +688,10 @@ class PROTVAE(BaseModuleClass):
         # self.size_factor = nn.Parameter(torch.randn(n_input))
         self.size_factor = nn.Parameter(torch.randn(n_input, n_batch))
 
-    def _get_inference_input(self, tensors):
-        x = tensors[REGISTRY_KEYS.X_KEY]
+    def _get_inference_input(self, tensors, x_substitute=None, batch_index_substitute=None):
+        x = tensors[REGISTRY_KEYS.X_KEY] if x_substitute is None else x_substitute
 
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY] if batch_index_substitute is None else batch_index_substitute
 
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -798,21 +798,18 @@ class PROTVAE(BaseModuleClass):
             "library": library,
         }
 
-    def _get_generative_input(self, tensors, inference_outputs, transform_batch=None):
+    def _get_generative_input(self, tensors, inference_outputs, batch_index_substitute=None):
         z = inference_outputs["z"]
         size_factor = inference_outputs["library"]
 
         x = tensors[REGISTRY_KEYS.X_KEY]
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY] if batch_index_substitute is None else batch_index_substitute
 
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-        if transform_batch is not None:
-            batch_index = torch.ones_like(batch_index) * transform_batch
 
         return {
             "x": x,
@@ -914,13 +911,87 @@ class PROTVAE(BaseModuleClass):
             "pm": pm,
         }
 
+    @auto_move_data
+    def forward(
+        self,
+        tensors,
+        get_inference_input_kwargs: dict | None = None,
+        get_generative_input_kwargs: dict | None = None,
+        inference_kwargs: dict | None = None,
+        generative_kwargs: dict | None = None,
+        loss_kwargs: dict | None = None,
+        compute_loss=True,
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, LossOutput]:
+        """Forward pass through the network.
+
+        Parameters
+        ----------
+        tensors
+            tensors to pass through
+        get_inference_input_kwargs
+            Keyword args for ``_get_inference_input()``
+        get_generative_input_kwargs
+            Keyword args for ``_get_generative_input()``
+        inference_kwargs
+            Keyword args for ``inference()``
+        generative_kwargs
+            Keyword args for ``generative()``
+        loss_kwargs
+            Keyword args for ``loss()``
+        compute_loss
+            Whether to compute loss on forward pass. This adds
+            another return value.
+
+        """
+        inference_kwargs = _get_dict_if_none(inference_kwargs)
+        generative_kwargs = _get_dict_if_none(generative_kwargs)
+        loss_kwargs = _get_dict_if_none(loss_kwargs)
+        get_inference_input_kwargs = _get_dict_if_none(get_inference_input_kwargs)
+        get_generative_input_kwargs = _get_dict_if_none(get_generative_input_kwargs)
+
+        inference_inputs = self._get_inference_input(tensors, **get_inference_input_kwargs)
+        inference_outputs = self.inference(**inference_inputs, **inference_kwargs)
+        generative_inputs = self._get_generative_input(tensors, inference_outputs, **get_generative_input_kwargs)
+        generative_outputs = self.generative(**generative_inputs, **generative_kwargs)
+
+        if compute_loss:
+            # cycle consistency loss
+            batch_index_substitute = self._get_cycle_consistency_batch_index(inference_inputs["batch_index"])
+            generative_cycle_inputs = self._get_generative_input(
+                tensors,
+                inference_outputs,
+                batch_index_substitute=batch_index_substitute,
+                **get_generative_input_kwargs,
+            )
+            generative_cycle_outputs = self.generative(**generative_cycle_inputs, **generative_kwargs)
+
+            inference_cycle_inputs = self._get_inference_input(
+                tensors,
+                x_substitute=generative_cycle_outputs["x"],
+                batch_index_substitute=batch_index_substitute,
+                **get_inference_input_kwargs,
+            )
+            inference_cycle_outputs = self.inference(**inference_cycle_inputs, **inference_kwargs)
+
+            losses = self.loss(tensors, inference_outputs, generative_outputs, inference_cycle_outputs, **loss_kwargs)
+            return inference_outputs, generative_outputs, losses
+        else:
+            return inference_outputs, generative_outputs
+
+    def _get_cycle_consistency_batch_index(self, batch_index):
+        # randomly sample a batch index (may be the same as the original batch index)
+        n = batch_index.shape[0]
+        return torch.randint(0, self.n_batch, (n, 1)).to(batch_index.device)
+
     def loss(
         self,
         tensors,
         inference_outputs,
         generative_outputs,
+        inference_cycle_outputs,
         kl_weight: float = 1.0,
         mechanism_weight: float = 1.0,
+        cycle_weight: float = 1.0,
     ):
         """Computes the loss function for the model."""
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -937,6 +1008,8 @@ class PROTVAE(BaseModuleClass):
             mask=mask,
             scoring_mask=scoring_mask,
             **distributions,
+            qz_cycle=inference_cycle_outputs["qz"],
+            cycle_weight=cycle_weight,
             kl_weight=kl_weight,
             mechanism_weight=mechanism_weight,
         )
@@ -948,6 +1021,22 @@ class PROTVAE(BaseModuleClass):
         scoring_mask = torch.bernoulli(1.0 - p_missing.expand_as(mask)).to(mask.dtype).to(mask.device)
         return scoring_mask
 
+    def _cycle_consistency_loss(self, qz, qz_cycle, standardize=True):
+        loss = nn.MSELoss(reduction="none")
+
+        if standardize:
+
+            def _standardize(x):
+                return (x - x.mean(dim=0, keepdim=True)) / x.std(dim=0, keepdim=True)
+
+            qz_mean = _standardize(qz.mean)
+            qz_cycle_mean = _standardize(qz_cycle.mean)
+        else:
+            qz_mean = qz.mean
+            qz_cycle_mean = qz_cycle.mean
+
+        return loss(qz_cycle_mean, qz_mean).sum(-1)
+
     def _elbo_loss(
         self,
         x,
@@ -957,8 +1046,10 @@ class PROTVAE(BaseModuleClass):
         pz,
         px,
         pm,
+        qz_cycle,
         kl_weight: float = 1.0,
         mechanism_weight: float = 1.0,
+        cycle_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
         log_px = mask * px.log_prob(x)
@@ -977,8 +1068,12 @@ class PROTVAE(BaseModuleClass):
         kl = kl_divergence(qz, pz).sum(dim=-1)
         weighted_kl = kl * kl_weight
 
+        ## Cycle consistency loss
+        cycle_loss = self._cycle_consistency_loss(qz, qz_cycle)
+        weighted_cycle_loss = cycle_weight * cycle_loss
+
         ## ELBO
-        loss = (reconstruction_loss + weighted_kl).mean()
+        loss = (reconstruction_loss + weighted_kl + weighted_cycle_loss).mean()
 
         return LossOutput(loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl)
 
@@ -1007,7 +1102,9 @@ class PROTVAE(BaseModuleClass):
         pz,
         px,
         pm,
+        qz_cycle,
         mechanism_weight: float = 1.0,
+        cycle_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
         log_weights = self._get_log_importance_weights(x, z, mask, scoring_mask, qz, pz, px, pm, mechanism_weight)
@@ -1016,11 +1113,20 @@ class PROTVAE(BaseModuleClass):
         log_weight_sum = log_weights.logsumexp(dim=0)
 
         # Truncated Importance Sampling
-        log_weight_sum -= np.log(log_weights.size(0))
+        truncated_log_weight_sum = log_weight_sum - np.log(log_weights.size(0))
 
-        loss = -log_weight_sum.mean()
+        # Cycle consistency loss
+        cycle_loss = self._cycle_consistency_loss(qz, qz_cycle)
+        weighted_cycle_loss = cycle_weight * cycle_loss
+
+        loss = (-truncated_log_weight_sum + weighted_cycle_loss).mean()
 
         return LossOutput(loss=loss, n_obs_minibatch=x.size(0))
 
     def sample(self):
         raise NotImplementedError
+
+
+def _get_dict_if_none(param):
+    param = {} if not isinstance(param, dict) else param
+    return param
