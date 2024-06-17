@@ -82,6 +82,33 @@ class GlobalLinear(nn.Module):
 
         return out
 
+class BatchGlobalLinear(nn.Module):
+    def __init__(self, n_batch: int, bias: bool = True, device=None, dtype=None):
+        super().__init__()
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.n_batch = n_batch
+
+        self.weight = nn.Parameter(torch.empty(n_batch, **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(n_batch, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight)
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+    def forward(self, x: torch.Tensor, batch_index) -> torch.Tensor:
+        out = x * torch.index_select(self.weight, 0, batch_index[:, 0].long()).unsqueeze(1) # batch x n_output
+
+        if self.bias is not None:
+            out += torch.index_select(self.bias, 0, batch_index[:, 0].long()).unsqueeze(1)
+
+        return out
+
 
 class ElementwiseLinear(nn.Module):
     def __init__(self, n_features: int, bias: bool = True, device=None, dtype=None):
@@ -124,6 +151,7 @@ class DecoderPROTVI(nn.Module):
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
@@ -201,7 +229,10 @@ class DecoderPROTVI(nn.Module):
         if self.batch_continous_info is None:
             batch_input = one_hot(batch_index, self.n_batch)
         else:
-            batch_input = self.batch_continous_info[batch_index].squeeze()
+            # batch_input = self.batch_continous_info[batch_index].squeeze()
+            batch_input = self.batch_continous_info.squeeze()
+            
+            
 
         if self.batch_embedding_type == "one-hot":
             batch_encoding = batch_input
@@ -209,6 +240,12 @@ class DecoderPROTVI(nn.Module):
             batch_encoding = self.batch_embedding(batch_input)
         elif self.batch_embedding_type == "encoder":
             batch_encoding = self.batch_encoder(batch_input)
+            # print(batch_encoding.size())
+            # print(batch_index.size())
+            # print(batch_index)
+            batch_encoding = torch.index_select(
+                                batch_encoding, 0, batch_index[:, 0].long()
+                            )  # batch x latent dim
         else:
             raise ValueError("Invalid batch embedding type")
 
@@ -241,10 +278,12 @@ class ConjunctionDecoderPROTVI(nn.Module):
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
 
+        # self.detection_trend = detection_trend
         self.base_nn = DecoderPROTVI(
             n_input=n_input,
             n_output=n_output,
@@ -260,10 +299,21 @@ class ConjunctionDecoderPROTVI(nn.Module):
         )
 
         self.m_prob_decoder = nn.Sequential(
-            nn.Linear(n_hidden, n_output),
-            GlobalLinear(n_output),
-            nn.Sigmoid(),
-        )
+                nn.Linear(n_hidden, n_output),
+                # GlobalLinear(n_output),
+                nn.Sigmoid(),
+            )
+        
+        # if detection_trend == "global":
+        #     self.m_prob_decoder = nn.Sequential(
+        #         nn.Linear(n_hidden, n_output),
+        #         GlobalLinear(n_output),
+        #         nn.Sigmoid(),
+        #     )
+        # else: # per batch modeling
+        #     self.m_prob_decoder = nn.Linear(n_hidden, n_output)
+        #     self.m_logits = BatchGlobalLinear(n_batch)
+        #     self.m_probs = nn.Sigmoid()
 
     def forward(
         self,
@@ -299,6 +349,13 @@ class ConjunctionDecoderPROTVI(nn.Module):
         x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
         m_prob = self.m_prob_decoder(h)
 
+        # if self.detection_trend == "global":
+        #     m_prob = self.m_prob_decoder(h)
+        # else:
+        #     xm_prob = self.m_prob_decoder(h)
+        #     m_prob = self.m_probs(self.m_logits(xm_prob, batch_index))
+                    
+
         return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
@@ -318,6 +375,7 @@ class HybridDecoderPROTVI(nn.Module):
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
@@ -407,10 +465,12 @@ class SelectionDecoderPROTVI(nn.Module):
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
-
+        
+        self.detection_trend = detection_trend
         self.base_nn = DecoderPROTVI(
             n_input=n_input,
             n_output=n_output,
@@ -422,14 +482,19 @@ class SelectionDecoderPROTVI(nn.Module):
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
             batch_continous_info=batch_continous_info,
+            detection_trend=detection_trend,
             **kwargs,
         )
 
-        self.m_logit = GlobalLinear(n_output)
-        self.m_prob_decoder = nn.Sequential(
-            self.m_logit,
-            nn.Sigmoid(),
-        )
+        if detection_trend == "global":
+            self.m_logit = GlobalLinear(n_output)
+            self.m_prob_decoder = nn.Sequential(
+                self.m_logit,
+                nn.Sigmoid(),
+            )
+        else: # per batch modeling
+            self.m_logit = BatchGlobalLinear(n_batch)
+            self.m_prob_decoder = nn.Sigmoid()
 
     def forward(
         self,
@@ -473,7 +538,10 @@ class SelectionDecoderPROTVI(nn.Module):
             m = x_obs != 0
             x_mix = x_obs * m + x_mean * ~m
 
-        m_prob = self.m_prob_decoder(x_mix)
+        if self.detection_trend == "global":
+            m_prob = self.m_prob_decoder(x_mix)
+        else:
+            m_prob = self.m_prob_decoder(self.m_logit(x_mix, batch_index))
 
         return x_norm, x_mean, x_var, m_prob
 
@@ -583,6 +651,7 @@ class PROTVAE(BaseModuleClass):
         n_prior_cats_per_cov: Iterable[int] = None,
         n_norm_continuous_cov: int = 0,  # @TODO: unused
         batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -665,6 +734,7 @@ class PROTVAE(BaseModuleClass):
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
             batch_continous_info=batch_continous_info,
+            detection_trend=detection_trend,
         )
 
         ## Latent prior encoder
