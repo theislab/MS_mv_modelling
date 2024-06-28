@@ -151,7 +151,7 @@ class DecoderPROTVI(nn.Module):
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
-        detection_trend: Literal["global", "per-batch"] = "global",
+        # detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
@@ -279,6 +279,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
         **kwargs,
     ):
         super().__init__()
@@ -321,6 +322,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
         *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
@@ -376,6 +378,7 @@ class HybridDecoderPROTVI(nn.Module):
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
         **kwargs,
     ):
         super().__init__()
@@ -404,6 +407,7 @@ class HybridDecoderPROTVI(nn.Module):
         x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
         *extra_cat_list: int,
         **kwargs,
     ):
@@ -466,6 +470,7 @@ class SelectionDecoderPROTVI(nn.Module):
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
         **kwargs,
     ):
         super().__init__()
@@ -482,7 +487,6 @@ class SelectionDecoderPROTVI(nn.Module):
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
             batch_continous_info=batch_continous_info,
-            detection_trend=detection_trend,
             **kwargs,
         )
 
@@ -493,7 +497,7 @@ class SelectionDecoderPROTVI(nn.Module):
                 nn.Sigmoid(),
             )
         else: # per batch modeling
-            self.m_logit = BatchGlobalLinear(n_batch)
+            self.m_logit = BatchGlobalLinear(n_trend_batch)
             self.m_prob_decoder = nn.Sigmoid()
 
     def forward(
@@ -502,6 +506,7 @@ class SelectionDecoderPROTVI(nn.Module):
         x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
         *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
@@ -541,7 +546,7 @@ class SelectionDecoderPROTVI(nn.Module):
         if self.detection_trend == "global":
             m_prob = self.m_prob_decoder(x_mix)
         else:
-            m_prob = self.m_prob_decoder(self.m_logit(x_mix, batch_index))
+            m_prob = self.m_prob_decoder(self.m_logit(x_mix, trend_batch_index))
 
         return x_norm, x_mean, x_var, m_prob
 
@@ -652,10 +657,12 @@ class PROTVAE(BaseModuleClass):
         n_norm_continuous_cov: int = 0,  # @TODO: unused
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
     ):
         super().__init__()
         self.n_latent = n_latent
         self.n_batch = n_batch
+        self.n_trend_batch = n_trend_batch
         self.log_variational = log_variational
         self.x_variance = x_variance
         self.latent_distribution = latent_distribution
@@ -670,6 +677,7 @@ class PROTVAE(BaseModuleClass):
             "iwae": self._iwae_loss,
         }
         self.loss_fn = losses[loss_type]
+        self.decoder_type = decoder_type
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -735,6 +743,7 @@ class PROTVAE(BaseModuleClass):
             use_layer_norm=use_layer_norm_decoder,
             batch_continous_info=batch_continous_info,
             detection_trend=detection_trend,
+            n_trend_batch=n_trend_batch,
         )
 
         ## Latent prior encoder
@@ -762,7 +771,7 @@ class PROTVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-
+        
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -778,6 +787,8 @@ class PROTVAE(BaseModuleClass):
         norm_cont_key = EXTRA_KEYS.NORM_CONT_COVS_KEY
         norm_cont_covs = tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
 
+        
+
         return {
             "x": x,
             "batch_index": batch_index,
@@ -786,6 +797,7 @@ class PROTVAE(BaseModuleClass):
             "prior_cont_covs": prior_cont_covs,
             "prior_cat_covs": prior_cat_covs,
             "norm_cont_covs": norm_cont_covs,
+            
         }
 
     @auto_move_data
@@ -875,6 +887,9 @@ class PROTVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
+        trend_batch_key = EXTRA_KEYS.TREND_BATCH_KEY
+        trend_batch_index = tensors[trend_batch_key] if trend_batch_key in tensors.keys() else None
+
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -891,6 +906,7 @@ class PROTVAE(BaseModuleClass):
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
+            "trend_batch_index": trend_batch_index,
         }
 
     @auto_move_data
@@ -902,6 +918,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
+        trend_batch_index=None,
         use_x_mix=False,
     ):
         """Runs the generative model."""
@@ -917,6 +934,10 @@ class PROTVAE(BaseModuleClass):
         if batch_index is not None:
             # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
             batch_index = batch_index.repeat(n_samples, 1)
+        
+        if trend_batch_index is not None:
+            # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
+            trend_batch_index = trend_batch_index.repeat(n_samples, 1)
 
         if cat_covs is not None:
             # shape: (n_batch, n_cat_covs) -> (n_samples * n_batch, n_cat_covs)
@@ -940,7 +961,7 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
+        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, *categorical_input) # double check this
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
         x_norm = x_norm.view(unpacked_shape)
@@ -1034,7 +1055,8 @@ class PROTVAE(BaseModuleClass):
         log_px = mask * px.log_prob(x)
         log_pm = mechanism_weight * pm.log_prob(mask)
 
-        log_obs = scoring_mask * (log_px + log_pm)
+        # log_obs = scoring_mask * (log_px + log_pm)
+        log_obs = 1.0 * (log_px + log_pm)
 
         # (n_samples, n_batch, n_features) -> (n_batch, n_features)
         log_pd = log_obs.sum(dim=0)

@@ -2,6 +2,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+from statsmodels.nonparametric.smoothers_lowess import lowess
+import pandas as pd
+
 
 import protvi.metrics as metrics
 
@@ -656,6 +659,62 @@ def plot_protein_detection_proportion_panel_protDP(x, protdp_result, color="blue
     _scatter_compare_protein_detection_proportion(p_protein, p_est, color=color, ax=axes[1])
     _hist_compare_protein_detection_proportion_difference(p_protein, p_est, color=color, ax=axes[2])
     _scatter_compare_protein_detection_proportion_difference(x_protein, p_protein, p_est, color=color, ax=axes[3])
+
+
+# decoder types: ["selection", "conjunction", "hybrid"]
+def plot_detection_curve(model, adata, detection_trend_key=None, layer='raw', lowess_frac=0.6, colors=None, show=True): # TO DO: replace with a color pallete?
+
+    detections = np.mean(~np.isnan(adata.layers[layer]), axis=0)
+    ave_exp = np.nanmean(adata.layers[layer], axis=0)
+    scF_df = pd.DataFrame({'x':ave_exp, 'y': detections})
+    ax = sns.scatterplot(data = scF_df, x='x', y='y', color="darkgrey")
+    ax.set(xlabel='Ave log-intensity', ylabel='detection proportion')
+
+    
+    def smoothing(x, y, lowess_frac = lowess_frac):
+        # lowess_frac = 0.6  # size of data (%) for estimation =~ smoothing window
+        lowess_it = 0
+        x_smooth = x
+        y_smooth = lowess(y, x, is_sorted=False, frac=lowess_frac, it=lowess_it, return_sorted=False)
+        return x_smooth, y_smooth
+
+    def sigmoid(x):
+        return 1 / (1 + np.exp(-x))
+
+    if model.module.decoder_type == 'conjunction': # TO DO: add for hybrid
+        x_est, p_est = model.impute(n_samples=adata.n_obs, batch_size = 1)
+        detections = np.mean(p_est, axis=0)
+        # ave_exp = np.nanmean(adata.layers[layer], axis=0)
+        mu_smooth, p_smooth = smoothing(ave_exp, detections, lowess_frac = lowess_frac)
+        sns.lineplot(x = mu_smooth, y = p_smooth, color='black',  label='ProtVI')
+        
+
+    if model.module.decoder_type == 'selection':
+        slope, intercept = model.module.decoder.get_mask_logit_weights()
+
+        if detection_trend_key is not None:
+            groupvar = detection_trend_key
+            for i in range(len(adata.obs[groupvar].unique())):
+                group = adata.obs[groupvar].unique()[i]
+                aveExp = np.nanmean(adata[adata.obs[groupvar].isin([group])].layers[layer], axis=0)
+                ys = sigmoid(slope[i] * aveExp + intercept[i])
+                sns.lineplot(x = aveExp, y = ys, color=colors[i],  label=f'trend_{group}')
+        
+        elif detection_trend_key is None and len(slope) == 1: # global trend
+            ys = sigmoid(slope * ave_exp + intercept)
+            sns.lineplot(x = ave_exp, y = ys, color='black',  label='ProtVI')
+        else:
+            raise NotImplementedError("Multi-batch trend fit. Please specify a detection_trend_key")
+            
+        
+    sns.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
+    if show:
+        plt.show()
+        
+                
+            
+
+    
 
 
 #############################################

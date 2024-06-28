@@ -139,6 +139,12 @@ class PROTVI(
             else None
         )
 
+        n_trend_batch = (
+            self.adata_manager.get_state_registry(EXTRA_KEYS.TREND_BATCH_KEY).n_cats_per_key
+            if EXTRA_KEYS.TREND_BATCH_KEY in self.adata_manager.data_registry
+            else None
+        )
+
         self.module = PROTVAE(
             n_input=self.summary_stats.n_vars,
             n_batch=n_batch,
@@ -163,6 +169,7 @@ class PROTVI(
             n_prior_cats_per_cov=n_prior_cats_per_cov,
             batch_continous_info=torch.tensor(batch_continous_info) if batch_continous_info is not None else None,
             detection_trend=detection_trend,
+            n_trend_batch=n_trend_batch,
             **model_kwargs,
         )
 
@@ -416,6 +423,13 @@ class PROTVI(
         else:
             return norm_abuns
 
+    def get_detection_curve(self):
+        if self.module.decoder_type == 'selection':
+            slope, intercept = self.module.decoder.get_mask_logit_weights()
+            return slope, intercept
+        else:
+            raise NotImplementedError(f"Slope and Intercept unknown for decoder type: {self.module.decoder_type}")
+    
     def differential_abundance(
         self,
         adata: AnnData = None,
@@ -501,6 +515,7 @@ class PROTVI(
         prior_continuous_covariate_keys: list[str] = None,
         prior_categorical_covariate_keys: list[str] = None,
         norm_continuous_covariate_keys: list[str] = None,
+        detection_trend_key: list[str] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -536,6 +551,7 @@ class PROTVI(
             CategoricalJointObsField(EXTRA_KEYS.PRIOR_CAT_COVS_KEY, prior_categorical_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.NORM_CONT_COVS_KEY, norm_continuous_covariate_keys),
+            CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
         ]
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
