@@ -1,7 +1,7 @@
 import logging
 import warnings
 from functools import partial
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 def scprotein_raw_counts_properties(
     adata_manager: AnnDataManager,
-    idx1: list[int] | np.ndarray,
-    idx2: list[int] | np.ndarray,
-    var_idx: Optional[list[int] | np.ndarray] = None,
+    idx1: list[int],
+    idx2: list[int],
+    var_idx: list[int] = None,
 ) -> dict[str, np.ndarray]:
     """Computes and returns some statistics on the raw counts of two sub-populations.
 
@@ -114,10 +114,14 @@ class PROTVI(
         log_variational: bool = True,
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
-        use_x_mix=False,
-        encode_norm_factors=False,
+        use_x_mix: bool = False,
+        encode_norm_factors: bool = False,
+        batch_continous_info: np.ndarray = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -135,6 +139,12 @@ class PROTVI(
             else None
         )
 
+        n_trend_batch = (
+            self.adata_manager.get_state_registry(EXTRA_KEYS.TREND_BATCH_KEY).n_cats_per_key
+            if EXTRA_KEYS.TREND_BATCH_KEY in self.adata_manager.data_registry
+            else None
+        )
+
         self.module = PROTVAE(
             n_input=self.summary_stats.n_vars,
             n_batch=n_batch,
@@ -149,12 +159,17 @@ class PROTVI(
             log_variational=log_variational,
             decoder_type=decoder_type,
             loss_type=loss_type,
+            batch_embedding_type=batch_embedding_type,
+            batch_dim=batch_dim,
             n_samples=n_samples,
             max_loss_dropout=max_loss_dropout,
             use_x_mix=use_x_mix,
             encode_norm_factors=encode_norm_factors,
             n_prior_continuous_cov=self.summary_stats.get("n_prior_continuous_covs", 0),
             n_prior_cats_per_cov=n_prior_cats_per_cov,
+            batch_continous_info=torch.tensor(batch_continous_info) if batch_continous_info is not None else None,
+            detection_trend=detection_trend,
+            n_trend_batch=n_trend_batch,
             **model_kwargs,
         )
 
@@ -165,11 +180,11 @@ class PROTVI(
     @torch.inference_mode()
     def impute(
         self,
-        adata: Optional[AnnData] = None,
-        indices: Optional[list[int] | np.ndarray] = None,
-        n_samples: Optional[int] = None,
+        adata: AnnData = None,
+        indices: list[int] = None,
+        n_samples: int = None,
         batch_size: int = 32,
-        loss_type: Optional[Literal["elbo", "iwae"]] = None,
+        loss_type: Literal["elbo", "iwae"] = None,
         replace_with_obs: bool = False,
     ):
         """Imputes the protein intensities (including the missing intensities) and detection probabilities for the given indices.
@@ -256,28 +271,28 @@ class PROTVI(
         ps = np.concatenate(ps_list, axis=0)
 
         if replace_with_obs:
-            x_data = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
-            m = x_data != 0
-            xs = x_data * m + xs * ~m
+            x_obs = self.adata_manager.get_from_registry(REGISTRY_KEYS.X_KEY)
+            m = x_obs != 0
+            xs = x_obs * m + xs * ~m
 
         return xs, ps
 
     @torch.inference_mode()
     def get_normalized_abundance(
         self,
-        adata: AnnData | None = None,
-        indices: list[int] | np.ndarray | None = None,
-        transform_batch: str | int | None = None,
+        adata: AnnData = None,
+        indices: list[int] = None,
+        transform_batch: str = None,
         # gene_list: list[str] | None = None,
         # library_size: float | Literal["latent"] = 1,
         n_samples: int = 1,
         n_samples_overall: int = None,
-        weights: Literal["uniform", "importance"] | None = None,
-        batch_size: int | None = None,
+        weights: Literal["uniform", "importance"] = None,
+        batch_size: int  = None,
         return_mean: bool = True,
-        return_numpy: bool | None = None,
+        return_numpy: bool = None,
         # **importance_weighting_kwargs,
-    ) -> np.ndarray | pd.DataFrame:
+    ) -> np.ndarray:
         r"""Returns the normalized (decoded) protein abundance.
 
         Parameters
@@ -408,24 +423,31 @@ class PROTVI(
         else:
             return norm_abuns
 
+    def get_detection_curve(self):
+        if self.module.decoder_type == 'selection':
+            slope, intercept = self.module.decoder.get_mask_logit_weights()
+            return slope, intercept
+        else:
+            raise NotImplementedError(f"Slope and Intercept unknown for decoder type: {self.module.decoder_type}")
+    
     def differential_abundance(
         self,
-        adata: AnnData | None = None,
-        groupby: str | None = None,
-        group1: list[str] | None = None,
-        group2: str | None = None,
-        idx1: list[int] | list[bool] | str | None = None,
-        idx2: list[int] | list[bool] | str | None = None,
+        adata: AnnData = None,
+        groupby: str = None,
+        group1: list[str] = None,
+        group2: str  = None,
+        idx1: list[int] = None,
+        idx2: list[int] = None,
         mode: Literal["vanilla", "change"] = "change",
         delta: float = 0.25,
-        batch_size: int | None = None,
+        batch_size: int  = None,
         all_stats: bool = True,
         batch_correction: bool = False,
-        batchid1: list[str] | None = None,
-        batchid2: list[str] | None = None,
+        batchid1: list[str]  = None,
+        batchid2: list[str] = None,
         fdr_target: float = 0.05,
         silent: bool = False,
-        weights: Literal["uniform", "importance"] | None = "uniform",
+        weights: Literal["uniform", "importance"] = "uniform",
         filter_outlier_cells: bool = False,
         # importance_weighting_kwargs: dict | None = None,
         **kwargs,
@@ -486,13 +508,14 @@ class PROTVI(
     def setup_anndata(
         cls,
         adata: AnnData,
-        layer: Optional[str] = None,
-        batch_key: Optional[str] = None,
-        categorical_covariate_keys: Optional[list[str]] = None,
-        continuous_covariate_keys: Optional[list[str]] = None,
-        prior_continuous_covariate_keys: Optional[list[str]] = None,
-        prior_categorical_covariate_keys: Optional[list[str]] = None,
-        norm_continuous_covariate_keys: Optional[list[str]] = None,
+        layer: str = None,
+        batch_key: str = None,
+        categorical_covariate_keys: list[str] = None,
+        continuous_covariate_keys: list[str] = None,
+        prior_continuous_covariate_keys: list[str] = None,
+        prior_categorical_covariate_keys: list[str] = None,
+        norm_continuous_covariate_keys: list[str] = None,
+        detection_trend_key: list[str] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -528,6 +551,7 @@ class PROTVI(
             CategoricalJointObsField(EXTRA_KEYS.PRIOR_CAT_COVS_KEY, prior_categorical_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.NORM_CONT_COVS_KEY, norm_continuous_covariate_keys),
+            CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
         ]
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)

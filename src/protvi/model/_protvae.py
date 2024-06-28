@@ -1,9 +1,10 @@
 import logging
-from collections.abc import Iterable
-from typing import Callable, Literal, Optional
+from collections.abc import Callable, Iterable
+from typing import Literal
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from scvi import REGISTRY_KEYS
 from scvi.module.base import (
     BaseModuleClass,
@@ -13,16 +14,45 @@ from scvi.module.base import (
 from scvi.nn import (
     Encoder,
     FCLayers,
+    one_hot,
 )
 from torch import nn as nn
-import torch.nn.functional as F
 from torch.distributions import Bernoulli, Normal, kl_divergence
-
-from scvi.nn import one_hot
 
 from ._constants import EXTRA_KEYS
 
 logger = logging.getLogger(__name__)
+
+
+class BatchEncoder(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        use_batch_norm: bool = False,
+        use_layer_norm: bool = False,
+        dropout_rate: float = 0.0,
+    ):
+        super().__init__()
+        self.n_input = n_input
+        self.batch_encoder = FCLayers(
+            n_in=n_input,
+            n_out=n_output,
+            n_cat_list=None,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            use_batch_norm=use_batch_norm,
+            use_layer_norm=use_layer_norm,
+        )
+
+    def forward(
+        self,
+        input,
+    ):
+        return self.batch_encoder(input)
 
 
 class GlobalLinear(nn.Module):
@@ -49,6 +79,33 @@ class GlobalLinear(nn.Module):
 
         if self.bias is not None:
             out += self.bias
+
+        return out
+
+class BatchGlobalLinear(nn.Module):
+    def __init__(self, n_batch: int, bias: bool = True, device=None, dtype=None):
+        super().__init__()
+        factory_kwargs = {"device": device, "dtype": dtype}
+        self.n_batch = n_batch
+
+        self.weight = nn.Parameter(torch.empty(n_batch, **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(n_batch, **factory_kwargs))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight)
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
+
+    def forward(self, x: torch.Tensor, batch_index) -> torch.Tensor:
+        out = x * torch.index_select(self.weight, 0, batch_index[:, 0].long()).unsqueeze(1) # batch x n_output
+
+        if self.bias is not None:
+            out += torch.index_select(self.bias, 0, batch_index[:, 0].long()).unsqueeze(1)
 
         return out
 
@@ -81,24 +138,50 @@ class ElementwiseLinear(nn.Module):
         return out
 
 
-class ConjunctionDecoderPROTVI(nn.Module):
+class DecoderPROTVI(nn.Module):
     def __init__(
         self,
         n_input: int,
         n_output: int,
-        n_cat_list: Iterable[int] = None,
+        n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
+        n_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
+        # detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
 
         self.x_variance = x_variance
+        self.n_batch = n_batch
+        self.batch_embedding_type = batch_embedding_type
+        self.batch_continous_info = batch_continous_info
 
-        # z -> px
+        n_cat_list = list([] if n_extra_cat_list is None else n_extra_cat_list)
+
+        batch_input_dim = batch_continous_info.shape[-1] if batch_continous_info is not None else n_batch
+
+        if batch_embedding_type == "one-hot":
+            h_input = n_input + batch_input_dim
+        elif batch_embedding_type == "embedding":
+            h_input = n_input + batch_dim
+            if batch_dim is None:
+                raise ValueError("`n_embedding` must be provided when using batch embedding")
+            self.batch_embedding = nn.Linear(batch_input_dim, batch_dim, bias=False)
+        elif batch_embedding_type == "encoder":
+            h_input = n_input + batch_dim
+            self.batch_encoder = BatchEncoder(
+                n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
+            )
+        else:
+            raise ValueError("Invalid batch embedding type")
+
         self.h_decoder = FCLayers(
-            n_in=n_input,
+            n_in=h_input,
             n_out=n_hidden,
             n_cat_list=n_cat_list,
             n_layers=n_layers,
@@ -114,20 +197,12 @@ class ConjunctionDecoderPROTVI(nn.Module):
         elif self.x_variance == "protein":
             self.x_var = nn.Parameter(torch.randn(n_output))
 
-        # z -> p
-        self.m_logit = GlobalLinear(n_output)
-        self.m_prob_decoder = nn.Sequential(
-            nn.Linear(n_hidden, n_output),
-            self.m_logit,
-            nn.Sigmoid(),
-        )
-
     def forward(
         self,
         z: torch.Tensor,
-        x_data: torch.Tensor,
         size_factor: torch.Tensor,
-        *cat_list: int,
+        batch_index: torch.Tensor,
+        *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
 
@@ -138,12 +213,12 @@ class ConjunctionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        cat_list
-            list of category membership(s) for this sample
-        x_data
-            unused
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
 
         Returns
         -------
@@ -151,8 +226,32 @@ class ConjunctionDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        # z -> px
-        h = self.h_decoder(z, *cat_list)
+        if self.batch_continous_info is None:
+            batch_input = one_hot(batch_index, self.n_batch)
+        else:
+            # batch_input = self.batch_continous_info[batch_index].squeeze()
+            batch_input = self.batch_continous_info.squeeze()
+            
+            
+
+        if self.batch_embedding_type == "one-hot":
+            batch_encoding = batch_input
+        elif self.batch_embedding_type == "embedding":
+            batch_encoding = self.batch_embedding(batch_input)
+        elif self.batch_embedding_type == "encoder":
+            batch_encoding = self.batch_encoder(batch_input)
+            # print(batch_encoding.size())
+            # print(batch_index.size())
+            # print(batch_index)
+            batch_encoding = torch.index_select(
+                                batch_encoding, 0, batch_index[:, 0].long()
+                            )  # batch x latent dim
+        else:
+            raise ValueError("Invalid batch embedding type")
+
+        hz = torch.cat((z, batch_encoding), dim=-1)
+
+        h = self.h_decoder(hz, *extra_cat_list)
         x_norm = self.x_mean_decoder(h).squeeze()
         x_mean = x_norm - size_factor
 
@@ -163,19 +262,106 @@ class ConjunctionDecoderPROTVI(nn.Module):
 
         x_var = torch.exp(x_var)
 
-        # z -> p
+        return x_norm, x_mean, x_var, h
+
+
+class ConjunctionDecoderPROTVI(nn.Module):
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_extra_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        x_variance: Literal["protein", "protein-cell"] = "protein",
+        n_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
+        **kwargs,
+    ):
+        super().__init__()
+
+        # self.detection_trend = detection_trend
+        self.base_nn = DecoderPROTVI(
+            n_input=n_input,
+            n_output=n_output,
+            n_extra_cat_list=n_extra_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            x_variance=x_variance,
+            n_batch=n_batch,
+            batch_embedding_type=batch_embedding_type,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
+            **kwargs,
+        )
+
+        self.m_prob_decoder = nn.Sequential(
+                nn.Linear(n_hidden, n_output),
+                # GlobalLinear(n_output),
+                nn.Sigmoid(),
+            )
+        
+        # if detection_trend == "global":
+        #     self.m_prob_decoder = nn.Sequential(
+        #         nn.Linear(n_hidden, n_output),
+        #         GlobalLinear(n_output),
+        #         nn.Sigmoid(),
+        #     )
+        # else: # per batch modeling
+        #     self.m_prob_decoder = nn.Linear(n_hidden, n_output)
+        #     self.m_logits = BatchGlobalLinear(n_batch)
+        #     self.m_probs = nn.Sigmoid()
+
+    def forward(
+        self,
+        z: torch.Tensor,
+        x_obs: torch.Tensor,
+        size_factor: torch.Tensor,
+        batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
+        *extra_cat_list: int,
+    ):
+        """The forward computation for a single sample.
+
+         #. Decodes the data from the latent space using the decoder network
+         #. Returns tensors for the mean and variance of a multivariate distribution
+
+        Parameters
+        ----------
+        z
+            tensor with shape ``(n_input,)``
+        size_factor
+            normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
+
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            mean, variance, and detection probability tensors
+
+        """
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
         m_prob = self.m_prob_decoder(h)
+
+        # if self.detection_trend == "global":
+        #     m_prob = self.m_prob_decoder(h)
+        # else:
+        #     xm_prob = self.m_prob_decoder(h)
+        #     m_prob = self.m_probs(self.m_logits(xm_prob, batch_index))
+                    
 
         return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
-        weight = self.m_logit.weight.detach().cpu().numpy()
-
-        bias = None
-        if self.m_logit.bias is not None:
-            bias = self.m_logit.bias.detach().cpu().numpy()
-
-        return weight, bias
+        return None, None
 
 
 class HybridDecoderPROTVI(nn.Module):
@@ -183,33 +369,33 @@ class HybridDecoderPROTVI(nn.Module):
         self,
         n_input: int,
         n_output: int,
-        n_cat_list: Iterable[int] = None,
+        n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
+        n_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
         **kwargs,
     ):
         super().__init__()
 
-        self.x_variance = x_variance
-
-        # z -> px
-        self.h_decoder = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
+        self.base_nn = DecoderPROTVI(
+            n_input=n_input,
+            n_output=n_output,
+            n_extra_cat_list=n_extra_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            dropout_rate=0,
+            x_variance=x_variance,
+            n_batch=n_batch,
+            batch_embedding_type=batch_embedding_type,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
             **kwargs,
         )
-
-        self.x_mean_decoder = nn.Linear(n_hidden, n_output)
-
-        if self.x_variance == "protein-cell":
-            self.x_var_decoder = nn.Linear(n_hidden, n_output)
-        elif self.x_variance == "protein":
-            self.x_var = nn.Parameter(torch.randn(n_output))
 
         # z -> p, x -> p
         self.x_p = GlobalLinear(n_output)
@@ -218,9 +404,12 @@ class HybridDecoderPROTVI(nn.Module):
     def forward(
         self,
         z: torch.Tensor,
-        x_data: torch.Tensor,
+        x_obs: torch.Tensor,
         size_factor: torch.Tensor,
-        *cat_list: list[int],
+        batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
+        *extra_cat_list: int,
+        **kwargs,
     ):
         """The forward computation for a single sample.
 
@@ -231,12 +420,15 @@ class HybridDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        x_data
-            if set, use x_data instead of x_mean as input for the detection probability
-        cat_list
-            list of category membership(s) for this sample
+        x_obs
+            if set, use x_obs instead of x_mean as input for the detection probability
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
+
 
         Returns
         -------
@@ -244,26 +436,15 @@ class HybridDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        # z -> x
-        h = self.h_decoder(z, *cat_list)
-        x_norm = self.x_mean_decoder(h).squeeze()
-        x_mean = x_norm - size_factor
-
-        if self.x_variance == "protein-cell":
-            x_var = self.x_var_decoder(h)
-        elif self.x_variance == "protein":
-            x_var = self.x_var.expand(x_mean.shape)
-
-        x_var = torch.exp(x_var)
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
 
         # x_mix
-        if x_data is None:
+        if x_obs is None:
             x_mix = x_mean
         else:
-            m = x_data != 0
-            x_mix = x_data * m + x_mean * ~m
+            m = x_obs != 0
+            x_mix = x_obs * m + x_mean * ~m
 
-        # z -> p, x -> p
         z_p = self.z_p(h)
         x_p = self.x_p(x_mix)
 
@@ -280,47 +461,53 @@ class SelectionDecoderPROTVI(nn.Module):
         self,
         n_input: int,
         n_output: int,
-        n_cat_list: Iterable[int] = None,
+        n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
+        n_batch: int = None,
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
+        batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
         **kwargs,
     ):
         super().__init__()
-
-        self.x_variance = x_variance
-
-        # z -> x
-        self.x_decoder = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
+        
+        self.detection_trend = detection_trend
+        self.base_nn = DecoderPROTVI(
+            n_input=n_input,
+            n_output=n_output,
+            n_extra_cat_list=n_extra_cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
-            dropout_rate=0,
+            x_variance=x_variance,
+            n_batch=n_batch,
+            batch_embedding_type=batch_embedding_type,
+            batch_dim=batch_dim,
+            batch_continous_info=batch_continous_info,
             **kwargs,
         )
 
-        self.x_norm_decoder = nn.Linear(n_hidden, n_output)
-
-        if self.x_variance == "protein-cell":
-            self.x_var_decoder = nn.Linear(n_hidden, n_output)
-        elif self.x_variance == "protein":
-            self.x_var = nn.Parameter(torch.randn(n_output))
-
-        # x -> p
-        self.m_logit = GlobalLinear(n_output)
-        self.m_prob_decoder = nn.Sequential(
-            self.m_logit,
-            nn.Sigmoid(),
-        )
+        if detection_trend == "global":
+            self.m_logit = GlobalLinear(n_output)
+            self.m_prob_decoder = nn.Sequential(
+                self.m_logit,
+                nn.Sigmoid(),
+            )
+        else: # per batch modeling
+            self.m_logit = BatchGlobalLinear(n_trend_batch)
+            self.m_prob_decoder = nn.Sigmoid()
 
     def forward(
         self,
         z: torch.Tensor,
-        x_data: torch.Tensor,
+        x_obs: torch.Tensor,
         size_factor: torch.Tensor,
-        *cat_list: int,
+        batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor,
+        *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
 
@@ -331,12 +518,14 @@ class SelectionDecoderPROTVI(nn.Module):
         ----------
         z
             tensor with shape ``(n_input,)``
-        cat_list
-            list of category membership(s) for this sample
-        x_data
-            if set, use x_data instead of x_mean as input for the detection probability
+        x_obs
+            if set, use x_obs instead of x_mean as input for the detection probability
         size_factor
             normalization factor
+        batch_index
+            special case categorical covariate for batch index
+        extra_cat_list
+            list of category membership(s) for this sample
 
         Returns
         -------
@@ -345,25 +534,19 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        h = self.x_decoder(z, *cat_list)
-        x_norm = self.x_norm_decoder(h).squeeze()
-        x_mean = x_norm - size_factor
-
-        if self.x_variance == "protein-cell":
-            x_var = self.x_var_decoder(h)
-        elif self.x_variance == "protein":
-            x_var = self.x_var.expand(x_mean.shape)
-
-        x_var = torch.exp(x_var)
+        x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
 
         # x_mix
-        if x_data is None:
+        if x_obs is None:
             x_mix = x_mean
         else:
-            m = x_data != 0
-            x_mix = x_data * m + x_mean * ~m
+            m = x_obs != 0
+            x_mix = x_obs * m + x_mean * ~m
 
-        m_prob = self.m_prob_decoder(x_mix)
+        if self.detection_trend == "global":
+            m_prob = self.m_prob_decoder(x_mix)
+        else:
+            m_prob = self.m_prob_decoder(self.m_logit(x_mix, trend_batch_index))
 
         return x_norm, x_mean, x_var, m_prob
 
@@ -436,6 +619,9 @@ class PROTVAE(BaseModuleClass):
         Number of continuous covariates for the prior.
     n_prior_cats_per_cov
         Number of categories for each extra categorical covariate for the prior.
+    batch_continous_info
+        Information for batch continuous covariates. Assumes that the batch continuous covariates are ordered by batches also sorted by name.
+        See `scvi.data.setup_anndata` for more information on the ordering of batches.
 
     """
 
@@ -459,18 +645,24 @@ class PROTVAE(BaseModuleClass):
         var_activation: Callable = None,
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
+        batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
+        batch_dim: int = None,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
         use_x_mix=False,
         encode_norm_factors=False,
         use_norm_factors=False,  # @TODO: unused
         n_prior_continuous_cov: int = 0,
-        n_prior_cats_per_cov: Optional[Iterable[int]] = None,
+        n_prior_cats_per_cov: Iterable[int] = None,
         n_norm_continuous_cov: int = 0,  # @TODO: unused
+        batch_continous_info: torch.Tensor = None,
+        detection_trend: Literal["global", "per-batch"] = "global",
+        n_trend_batch: int = None,
     ):
         super().__init__()
         self.n_latent = n_latent
         self.n_batch = n_batch
+        self.n_trend_batch = n_trend_batch
         self.log_variational = log_variational
         self.x_variance = x_variance
         self.latent_distribution = latent_distribution
@@ -485,6 +677,7 @@ class PROTVAE(BaseModuleClass):
             "iwae": self._iwae_loss,
         }
         self.loss_fn = losses[loss_type]
+        self.decoder_type = decoder_type
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -527,23 +720,30 @@ class PROTVAE(BaseModuleClass):
 
         ## Decoder
         modules = {
-            "selection": SelectionDecoderPROTVI,
             "conjunction": ConjunctionDecoderPROTVI,
             "hybrid": HybridDecoderPROTVI,
+            "selection": SelectionDecoderPROTVI,
         }
         module = modules[decoder_type]
 
+        n_extra_cat_list = list([] if n_cats_per_cov is None else n_cats_per_cov)
         n_input_decoder = n_latent + n_continuous_cov
         self.decoder = module(
             n_input=n_input_decoder,
             n_output=n_input,
-            n_cat_list=cat_list,
+            n_extra_cat_list=n_extra_cat_list,
+            n_batch=n_batch,
             n_layers=n_layers,
             n_hidden=n_hidden,
             x_variance=x_variance,
+            batch_embedding_type=batch_embedding_type,
+            batch_dim=batch_dim,
             inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
+            batch_continous_info=batch_continous_info,
+            detection_trend=detection_trend,
+            n_trend_batch=n_trend_batch,
         )
 
         ## Latent prior encoder
@@ -571,7 +771,7 @@ class PROTVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-
+        
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -587,6 +787,8 @@ class PROTVAE(BaseModuleClass):
         norm_cont_key = EXTRA_KEYS.NORM_CONT_COVS_KEY
         norm_cont_covs = tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
 
+        
+
         return {
             "x": x,
             "batch_index": batch_index,
@@ -595,6 +797,7 @@ class PROTVAE(BaseModuleClass):
             "prior_cont_covs": prior_cont_covs,
             "prior_cat_covs": prior_cat_covs,
             "norm_cont_covs": norm_cont_covs,
+            
         }
 
     @auto_move_data
@@ -684,6 +887,9 @@ class PROTVAE(BaseModuleClass):
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
+        trend_batch_key = EXTRA_KEYS.TREND_BATCH_KEY
+        trend_batch_index = tensors[trend_batch_key] if trend_batch_key in tensors.keys() else None
+
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -700,6 +906,7 @@ class PROTVAE(BaseModuleClass):
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
+            "trend_batch_index": trend_batch_index,
         }
 
     @auto_move_data
@@ -711,6 +918,7 @@ class PROTVAE(BaseModuleClass):
         batch_index,
         cont_covs=None,
         cat_covs=None,
+        trend_batch_index=None,
         use_x_mix=False,
     ):
         """Runs the generative model."""
@@ -726,6 +934,10 @@ class PROTVAE(BaseModuleClass):
         if batch_index is not None:
             # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
             batch_index = batch_index.repeat(n_samples, 1)
+        
+        if trend_batch_index is not None:
+            # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
+            trend_batch_index = trend_batch_index.repeat(n_samples, 1)
 
         if cat_covs is not None:
             # shape: (n_batch, n_cat_covs) -> (n_samples * n_batch, n_cat_covs)
@@ -749,7 +961,7 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, *categorical_input)
+        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, *categorical_input) # double check this
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
         x_norm = x_norm.view(unpacked_shape)
@@ -843,7 +1055,8 @@ class PROTVAE(BaseModuleClass):
         log_px = mask * px.log_prob(x)
         log_pm = mechanism_weight * pm.log_prob(mask)
 
-        log_obs = scoring_mask * (log_px + log_pm)
+        # log_obs = scoring_mask * (log_px + log_pm)
+        log_obs = 1.0 * (log_px + log_pm)
 
         # (n_samples, n_batch, n_features) -> (n_batch, n_features)
         log_pd = log_obs.sum(dim=0)
