@@ -122,6 +122,7 @@ class PROTVI(
         encode_norm_factors: bool = False,
         batch_continous_info: np.ndarray = None,
         detection_trend: Literal["global", "per-batch"] = "global",
+        negative_control_indices: np.ndarray=None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -170,6 +171,7 @@ class PROTVI(
             batch_continous_info=torch.tensor(batch_continous_info) if batch_continous_info is not None else None,
             detection_trend=detection_trend,
             n_trend_batch=n_trend_batch,
+            negative_control_indices=negative_control_indices,
             **model_kwargs,
         )
 
@@ -552,6 +554,7 @@ class PROTVI(
             NumericalJointObsField(EXTRA_KEYS.PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.NORM_CONT_COVS_KEY, norm_continuous_covariate_keys),
             CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
+            
         ]
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)

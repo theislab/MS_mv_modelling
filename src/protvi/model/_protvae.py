@@ -148,10 +148,10 @@ class DecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
+        n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
-        # detection_trend: Literal["global", "per-batch"] = "global",
         **kwargs,
     ):
         super().__init__()
@@ -163,19 +163,20 @@ class DecoderPROTVI(nn.Module):
 
         n_cat_list = list([] if n_extra_cat_list is None else n_extra_cat_list)
 
-        batch_input_dim = batch_continous_info.shape[-1] if batch_continous_info is not None else n_batch
+        batch_input_dim = batch_continous_info.shape[-1] if batch_continous_info is not None else n_negative_control
 
         if batch_embedding_type == "one-hot":
-            h_input = n_input + batch_input_dim
+            h_input = n_input + n_batch
         elif batch_embedding_type == "embedding":
             h_input = n_input + batch_dim
             if batch_dim is None:
                 raise ValueError("`n_embedding` must be provided when using batch embedding")
-            self.batch_embedding = nn.Linear(batch_input_dim, batch_dim, bias=False)
+            self.batch_embedding = nn.Linear(n_batch, batch_dim, bias=False)
         elif batch_embedding_type == "encoder":
             h_input = n_input + batch_dim
             self.batch_encoder = BatchEncoder(
-                n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
+                # n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
+                n_input=batch_input_dim, n_output=batch_dim, n_hidden=128, n_layers=1
             )
         else:
             raise ValueError("Invalid batch embedding type")
@@ -202,6 +203,7 @@ class DecoderPROTVI(nn.Module):
         z: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
+        batch_negative_control: torch.Tensor = None,
         *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
@@ -226,12 +228,19 @@ class DecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        if self.batch_continous_info is None:
-            batch_input = one_hot(batch_index, self.n_batch)
+        # if self.batch_continous_info is None:
+        #     batch_input = one_hot(batch_index, self.n_batch)
+        # else:
+        #     batch_input = self.batch_continous_info[batch_index].squeeze()
+        #     # batch_input = self.batch_continous_info.squeeze()
+        
+        if self.batch_continous_info is not None:
+            batch_input = self.batch_continous_info[batch_index].squeeze()
+            # batch_input = self.batch_continous_info.squeeze()
+        elif batch_negative_control is not None:
+            batch_input = batch_negative_control
         else:
-            # batch_input = self.batch_continous_info[batch_index].squeeze()
-            batch_input = self.batch_continous_info.squeeze()
-            
+            batch_input = one_hot(batch_index, self.n_batch)    
             
 
         if self.batch_embedding_type == "one-hot":
@@ -243,9 +252,9 @@ class DecoderPROTVI(nn.Module):
             # print(batch_encoding.size())
             # print(batch_index.size())
             # print(batch_index)
-            batch_encoding = torch.index_select(
-                                batch_encoding, 0, batch_index[:, 0].long()
-                            )  # batch x latent dim
+            # batch_encoding = torch.index_select(
+            #                     batch_encoding, 0, batch_index[:, 0].long()
+            #                 )  # batch x latent dim
         else:
             raise ValueError("Invalid batch embedding type")
 
@@ -293,6 +302,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             n_hidden=n_hidden,
             x_variance=x_variance,
             n_batch=n_batch,
+            n_negative_control=n_negative_control,
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
             batch_continous_info=batch_continous_info,
@@ -323,6 +333,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         trend_batch_index: torch.Tensor,
+        batch_negative_control: torch.Tensor=None,
         *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
@@ -348,7 +359,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
         m_prob = self.m_prob_decoder(h)
 
         # if self.detection_trend == "global":
@@ -374,6 +385,7 @@ class HybridDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
+        n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
@@ -391,6 +403,7 @@ class HybridDecoderPROTVI(nn.Module):
             n_hidden=n_hidden,
             x_variance=x_variance,
             n_batch=n_batch,
+            n_negative_control=n_negative_control,
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
             batch_continous_info=batch_continous_info,
@@ -408,6 +421,7 @@ class HybridDecoderPROTVI(nn.Module):
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         trend_batch_index: torch.Tensor,
+        batch_negative_control: torch.Tensor = None,
         *extra_cat_list: int,
         **kwargs,
     ):
@@ -436,7 +450,7 @@ class HybridDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
 
         # x_mix
         if x_obs is None:
@@ -466,6 +480,7 @@ class SelectionDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell"] = "protein",
         n_batch: int = None,
+        n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
@@ -484,6 +499,7 @@ class SelectionDecoderPROTVI(nn.Module):
             n_hidden=n_hidden,
             x_variance=x_variance,
             n_batch=n_batch,
+            n_negative_control=n_negative_control,
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
             batch_continous_info=batch_continous_info,
@@ -507,6 +523,7 @@ class SelectionDecoderPROTVI(nn.Module):
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
         trend_batch_index: torch.Tensor,
+        batch_negative_control: torch.Tensor=None,
         *extra_cat_list: int,
     ):
         """The forward computation for a single sample.
@@ -534,7 +551,7 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, *extra_cat_list)
+        x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
 
         # x_mix
         if x_obs is None:
@@ -658,6 +675,8 @@ class PROTVAE(BaseModuleClass):
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
         n_trend_batch: int = None,
+        negative_control_indices: list[int] = None,
+        
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -678,6 +697,8 @@ class PROTVAE(BaseModuleClass):
         }
         self.loss_fn = losses[loss_type]
         self.decoder_type = decoder_type
+        self.negative_control_indices = negative_control_indices
+        self.n_negative_control = len(negative_control_indices) if negative_control_indices is not None else None
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -733,6 +754,7 @@ class PROTVAE(BaseModuleClass):
             n_output=n_input,
             n_extra_cat_list=n_extra_cat_list,
             n_batch=n_batch,
+            n_negative_control=self.n_negative_control,
             n_layers=n_layers,
             n_hidden=n_hidden,
             x_variance=x_variance,
@@ -899,6 +921,10 @@ class PROTVAE(BaseModuleClass):
         if transform_batch is not None:
             batch_index = torch.ones_like(batch_index) * transform_batch
 
+        nc_idx = self.negative_control_indices
+        if nc_idx is not None:
+            x_nc = x[:,nc_idx]
+        
         return {
             "x": x,
             "z": z,
@@ -907,6 +933,7 @@ class PROTVAE(BaseModuleClass):
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
             "trend_batch_index": trend_batch_index,
+            "x_nc": x_nc,
         }
 
     @auto_move_data
@@ -919,6 +946,7 @@ class PROTVAE(BaseModuleClass):
         cont_covs=None,
         cat_covs=None,
         trend_batch_index=None,
+        x_nc=None,
         use_x_mix=False,
     ):
         """Runs the generative model."""
@@ -961,7 +989,7 @@ class PROTVAE(BaseModuleClass):
         #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
         # )
 
-        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, *categorical_input) # double check this
+        x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, x_nc, *categorical_input) # double check this
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
         x_norm = x_norm.view(unpacked_shape)
