@@ -924,6 +924,8 @@ class PROTVAE(BaseModuleClass):
         nc_idx = self.negative_control_indices
         if nc_idx is not None:
             x_nc = x[:,nc_idx]
+        else:
+            x_nc = None
         
         return {
             "x": x,
