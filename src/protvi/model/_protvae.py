@@ -235,8 +235,8 @@ class DecoderPROTVI(nn.Module):
         #     # batch_input = self.batch_continous_info.squeeze()
         
         if self.batch_continous_info is not None:
-            batch_input = self.batch_continous_info[batch_index].squeeze()
-            # batch_input = self.batch_continous_info.squeeze()
+            # batch_input = self.batch_continous_info[batch_index].squeeze()
+            batch_input = self.batch_continous_info.squeeze()
         elif batch_negative_control is not None:
             batch_input = batch_negative_control
         else:
@@ -248,13 +248,13 @@ class DecoderPROTVI(nn.Module):
         elif self.batch_embedding_type == "embedding":
             batch_encoding = self.batch_embedding(batch_input)
         elif self.batch_embedding_type == "encoder":
-            batch_encoding = self.batch_encoder(batch_input)
+            batch_encoding = self.batch_encoder(torch.tensor(batch_input, dtype=z.dtype, device=z.device))
             # print(batch_encoding.size())
             # print(batch_index.size())
             # print(batch_index)
-            # batch_encoding = torch.index_select(
-            #                     batch_encoding, 0, batch_index[:, 0].long()
-            #                 )  # batch x latent dim
+            batch_encoding = torch.index_select(
+                                batch_encoding, 0, batch_index[:, 0].long()
+                            )  # batch x latent dim
         else:
             raise ValueError("Invalid batch embedding type")
 
