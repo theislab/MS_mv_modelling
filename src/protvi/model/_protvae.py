@@ -175,8 +175,8 @@ class DecoderPROTVI(nn.Module):
         elif batch_embedding_type == "encoder":
             h_input = n_input + batch_dim
             self.batch_encoder = BatchEncoder(
-                # n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
-                n_input=batch_input_dim, n_output=batch_dim, n_hidden=128, n_layers=1
+                n_input=batch_input_dim, n_output=batch_dim, n_hidden=n_hidden, n_layers=n_layers
+                # n_input=batch_input_dim, n_output=batch_dim, n_hidden=128, n_layers=1
             )
         else:
             raise ValueError("Invalid batch embedding type")
@@ -700,6 +700,8 @@ class PROTVAE(BaseModuleClass):
         self.negative_control_indices = negative_control_indices
         self.n_negative_control = len(negative_control_indices) if negative_control_indices is not None else None
 
+        self.n_prior_cats_per_cov = n_prior_cats_per_cov
+
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
         use_layer_norm_encoder = use_layer_norm == "encoder" or use_layer_norm == "both"
@@ -769,12 +771,15 @@ class PROTVAE(BaseModuleClass):
         )
 
         ## Latent prior encoder
-        n_input_prior_encoder = n_prior_continuous_cov
-        cat_list = list([] if n_prior_cats_per_cov is None else n_prior_cats_per_cov)
+        n_prior_cats_per_cov = n_prior_cats_per_cov[0] if n_prior_cats_per_cov is not None else 0
+        n_input_prior_encoder = n_prior_continuous_cov + n_prior_cats_per_cov
+        self.n_input_prior_encoder = n_input_prior_encoder
+        self.n_prior_cats_per_cov = n_prior_cats_per_cov
+        # cat_list = list([] if n_prior_cats_per_cov is None else n_prior_cats_per_cov)
         self.prior_encoder = Encoder(
             n_input=n_input_prior_encoder,
             n_output=n_latent,
-            n_cat_list=cat_list,
+            # n_cat_list=cat_list,
             n_layers=n_layers,  # this should be set to 1?
             n_hidden=n_hidden,
             dropout_rate=dropout_rate,
@@ -852,13 +857,16 @@ class PROTVAE(BaseModuleClass):
         else:
             prior_continous_input = torch.empty(0).to(x.device)
 
+
         if prior_cat_covs is not None:
-            prior_categorical_input = torch.split(prior_cat_covs, 1, dim=1)
+            prior_categorical_input = one_hot(prior_cat_covs, self.n_prior_cats_per_cov)
         else:
-            prior_categorical_input = ()
+            prior_categorical_input = torch.empty(0).to(x.device)   
 
         if (prior_cont_covs is not None) or (prior_cat_covs is not None):
-            pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
+            latent_model_input = torch.cat((prior_continous_input, prior_categorical_input), dim=-1)
+            # pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
+            pz, _ = self.prior_encoder(latent_model_input)
         else:
             pz = Normal(loc=0.0, scale=1.0)
 
