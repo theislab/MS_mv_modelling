@@ -14,6 +14,9 @@ from scvi.data.fields import (
     CategoricalObsField,
     LayerField,
     NumericalJointObsField,
+    # NumericalJointVarField,
+    # VarmField,
+    ObsmField,
 )
 from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import _get_batch_code_from_category
@@ -110,7 +113,7 @@ class PROTVI(
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         latent_distribution: Literal["normal", "ln"] = "normal",
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         log_variational: bool = True,
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
@@ -123,6 +126,7 @@ class PROTVI(
         batch_continous_info: np.ndarray = None,
         detection_trend: Literal["global", "per-batch"] = "global",
         negative_control_indices: np.ndarray=None,
+        tau_booster: np.ndarray=None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -172,6 +176,7 @@ class PROTVI(
             detection_trend=detection_trend,
             n_trend_batch=n_trend_batch,
             negative_control_indices=negative_control_indices,
+            # tau_booster=tau_booster,
             **model_kwargs,
         )
 
@@ -517,7 +522,8 @@ class PROTVI(
         prior_continuous_covariate_keys: list[str] = None,
         prior_categorical_covariate_keys: list[str] = None,
         norm_continuous_covariate_keys: list[str] = None,
-        detection_trend_key: list[str] = None,
+        detection_trend_key: list[str] = None, # TO DO: change this to str to avoid all tuple related errors, also for other vars
+        booster_protein_variances_key: list[str] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -556,6 +562,15 @@ class PROTVI(
             CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
             
         ]
+
+        if booster_protein_variances_key is not None:
+            anndata_fields.append(
+                ObsmField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key),
+            # NumericalJointVarField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key), # note: for some reasons both var stuff have issues with dataloader
+            # VarmField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key),
+            )
+
+        
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
