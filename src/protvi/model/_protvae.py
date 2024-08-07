@@ -146,8 +146,9 @@ class DecoderPROTVI(nn.Module):
         n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         n_batch: int = None,
+        n_batch_var: int = None,
         n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
@@ -158,6 +159,7 @@ class DecoderPROTVI(nn.Module):
 
         self.x_variance = x_variance
         self.n_batch = n_batch
+        self.n_batch_var = n_batch_var
         self.batch_embedding_type = batch_embedding_type
         self.batch_continous_info = batch_continous_info
 
@@ -171,7 +173,7 @@ class DecoderPROTVI(nn.Module):
             h_input = n_input + batch_dim
             if batch_dim is None:
                 raise ValueError("`n_embedding` must be provided when using batch embedding")
-            self.batch_embedding = nn.Linear(n_batch, batch_dim, bias=False)
+            self.batch_embedding = nn.Linear(n_batch, batch_dim, bias=False) # TO DO: replace with nn.Embedding
         elif batch_embedding_type == "encoder":
             h_input = n_input + batch_dim
             self.batch_encoder = BatchEncoder(
@@ -197,12 +199,20 @@ class DecoderPROTVI(nn.Module):
             self.x_var_decoder = nn.Linear(n_hidden, n_output)
         elif self.x_variance == "protein":
             self.x_var = nn.Parameter(torch.randn(n_output))
+        elif self.x_variance == "protein-batch":
+            self.x_var = nn.Parameter(torch.randn(n_output, n_batch_var))
+
+        
+                
+            
+            
 
     def forward(
         self,
         z: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
+        batch_var_index: torch.Tensor = None, # trend_batch_index will be recycled to be used for batch (covariate)-specific variances
         batch_negative_control: torch.Tensor = None,
         *extra_cat_list: int,
     ):
@@ -249,9 +259,6 @@ class DecoderPROTVI(nn.Module):
             batch_encoding = self.batch_embedding(batch_input)
         elif self.batch_embedding_type == "encoder":
             batch_encoding = self.batch_encoder(torch.tensor(batch_input, dtype=z.dtype, device=z.device))
-            # print(batch_encoding.size())
-            # print(batch_index.size())
-            # print(batch_index)
             batch_encoding = torch.index_select(
                                 batch_encoding, 0, batch_index[:, 0].long()
                             )  # batch x latent dim
@@ -262,13 +269,20 @@ class DecoderPROTVI(nn.Module):
 
         h = self.h_decoder(hz, *extra_cat_list)
         x_norm = self.x_mean_decoder(h).squeeze()
-        x_mean = x_norm - size_factor
+
+        
+        
+        x_mean = x_norm + size_factor.unsqueeze(1) # this may be need to be changed if bio_group not specified
+        # x_mean = x_norm 
+        
+
+       
 
         if self.x_variance == "protein-cell":
             x_var = self.x_var_decoder(h)
         elif self.x_variance == "protein":
-            x_var = self.x_var.expand(x_mean.shape)
-
+            x_var = self.x_var.expand(x_mean.shape) 
+        
         x_var = torch.exp(x_var)
 
         return x_norm, x_mean, x_var, h
@@ -282,7 +296,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         n_batch: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
@@ -293,7 +307,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
     ):
         super().__init__()
 
-        # self.detection_trend = detection_trend
+        
         self.base_nn = DecoderPROTVI(
             n_input=n_input,
             n_output=n_output,
@@ -315,16 +329,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
                 nn.Sigmoid(),
             )
         
-        # if detection_trend == "global":
-        #     self.m_prob_decoder = nn.Sequential(
-        #         nn.Linear(n_hidden, n_output),
-        #         GlobalLinear(n_output),
-        #         nn.Sigmoid(),
-        #     )
-        # else: # per batch modeling
-        #     self.m_prob_decoder = nn.Linear(n_hidden, n_output)
-        #     self.m_logits = BatchGlobalLinear(n_batch)
-        #     self.m_probs = nn.Sigmoid()
+
 
     def forward(
         self,
@@ -361,14 +366,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         """
         x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
         m_prob = self.m_prob_decoder(h)
-
-        # if self.detection_trend == "global":
-        #     m_prob = self.m_prob_decoder(h)
-        # else:
-        #     xm_prob = self.m_prob_decoder(h)
-        #     m_prob = self.m_probs(self.m_logits(xm_prob, batch_index))
                     
-
         return x_norm, x_mean, x_var, m_prob
 
     def get_mask_logit_weights(self):
@@ -383,7 +381,7 @@ class HybridDecoderPROTVI(nn.Module):
         n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         n_batch: int = None,
         n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
@@ -478,7 +476,7 @@ class SelectionDecoderPROTVI(nn.Module):
         n_extra_cat_list: Iterable[int] = None,
         n_layers: int = 1,
         n_hidden: int = 128,
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         n_batch: int = None,
         n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
@@ -499,6 +497,7 @@ class SelectionDecoderPROTVI(nn.Module):
             n_hidden=n_hidden,
             x_variance=x_variance,
             n_batch=n_batch,
+            n_batch_var=n_trend_batch[0] if n_trend_batch is not None else None,
             n_negative_control=n_negative_control,
             batch_embedding_type=batch_embedding_type,
             batch_dim=batch_dim,
@@ -551,7 +550,7 @@ class SelectionDecoderPROTVI(nn.Module):
 
         """
         # z -> x
-        x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
+        x_norm, x_mean, x_var, _ = self.base_nn(z, size_factor, batch_index, trend_batch_index, batch_negative_control, *extra_cat_list)
 
         # x_mix
         if x_obs is None:
@@ -654,7 +653,7 @@ class PROTVAE(BaseModuleClass):
         dropout_rate: float = 0.1,
         log_variational: bool = True,
         latent_distribution: Literal["normal", "ln"] = "normal",
-        x_variance: Literal["protein", "protein-cell"] = "protein",
+        x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         encode_covariates: bool = False,
         deeply_inject_covariates: bool = True,
         use_batch_norm: Literal["encoder", "decoder", "none", "both"] = "both",
@@ -676,6 +675,7 @@ class PROTVAE(BaseModuleClass):
         detection_trend: Literal["global", "per-batch"] = "global",
         n_trend_batch: int = None,
         negative_control_indices: list[int] = None,
+        
         
     ):
         super().__init__()
@@ -776,6 +776,15 @@ class PROTVAE(BaseModuleClass):
         self.n_input_prior_encoder = n_input_prior_encoder
         self.n_prior_cats_per_cov = n_prior_cats_per_cov
         # cat_list = list([] if n_prior_cats_per_cov is None else n_prior_cats_per_cov)
+        
+        # assuming the nn.Embedding as default implementation for all categorical data
+        # or can add additional batch_dim_prior, or can have a statement to choose between one-hot or nn.Embedding 
+        # but all one-hot should potentially be replaced with nn.Embedding
+        
+        
+        # TO DO: Need to deal with this properly if using embedding for categorical covariates
+        batch_dim = 0 if batch_dim is None else batch_dim
+        n_input_prior_encoder = n_prior_continuous_cov + batch_dim
         self.prior_encoder = Encoder(
             n_input=n_input_prior_encoder,
             n_output=n_latent,
@@ -793,6 +802,26 @@ class PROTVAE(BaseModuleClass):
 
         # self.size_factor = nn.Parameter(torch.randn(n_input))
         self.size_factor = nn.Parameter(torch.randn(n_input, n_batch))
+        # self.size_factor = nn.Parameter(torch.randn(n_trend_batch))
+
+
+        self.alpha = nn.Parameter(torch.rand(n_trend_batch[0], batch_dim),requires_grad=False) # torch.rand values between 0-1, torch.full to initialize all with a single value
+        
+        
+        self.shift_embedding = nn.Embedding(self.n_trend_batch[0], batch_dim) if self.n_trend_batch is not None else None
+        
+
+        self.prior_cat_embedding = nn.Embedding(self.n_prior_cats_per_cov, batch_dim) if self.n_prior_cats_per_cov is not None else None
+
+        
+        self.mixture_prior = False
+        if n_prior_cats_per_cov > 1:
+            self.b_prior_logits = torch.nn.Parameter(torch.zeros(n_prior_cats_per_cov))
+            self.b_prior_means = torch.nn.Parameter(torch.randn(10, n_prior_cats_per_cov))
+            self.b_prior_scales = torch.nn.Parameter(torch.zeros(10, n_prior_cats_per_cov))
+            self.mixture_prior = True
+            
+
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -859,14 +888,40 @@ class PROTVAE(BaseModuleClass):
 
 
         if prior_cat_covs is not None:
-            prior_categorical_input = one_hot(prior_cat_covs, self.n_prior_cats_per_cov)
+            #prior_categorical_input = one_hot(prior_cat_covs, self.n_prior_cats_per_cov) # TO DO: replace with nn.Embedding
+            # print(prior_cat_covs.size())
+            # print(prior_cat_covs)
+            prior_categorical_input = self.prior_cat_embedding(prior_cat_covs.long())
         else:
             prior_categorical_input = torch.empty(0).to(x.device)   
-
+        
+        #### original
+        # if (prior_cont_covs is not None) or (prior_cat_covs is not None):
+        #     latent_model_input = torch.cat((prior_continous_input, prior_categorical_input), dim=-1)
+        #     # pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
+        #     pz, _ = self.prior_encoder(latent_model_input)
+        # else:
+        #     pz = Normal(loc=0.0, scale=1.0)
+    
+        
         if (prior_cont_covs is not None) or (prior_cat_covs is not None):
             latent_model_input = torch.cat((prior_continous_input, prior_categorical_input), dim=-1)
+            # print(latent_model_input.size())
+            latent_model_input = latent_model_input.squeeze(1)
             # pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
             pz, _ = self.prior_encoder(latent_model_input)
+            
+        elif (prior_cat_covs is not None) and (prior_cont_covs is None):
+            offset = (
+                10.0 * F.one_hot(prior_cat_covs, num_classes=self.n_prior_cats_per_cov).float()
+                if self.n_prior_cats_per_cov >= 2
+                else 0.0
+            )
+            cats =torch.distributions.Categorical(logits=self.b_prior_logits + offset)
+            normal_dists = torch.distributions.Normal(self.b_prior_means, torch.exp(self.b_prior_scales))
+            pz = torch.distributions.MixtureSameFamily(cats, normal_dists)
+            
+            
         else:
             pz = Normal(loc=0.0, scale=1.0)
 
@@ -899,8 +954,8 @@ class PROTVAE(BaseModuleClass):
             library = ql.sample((n_samples,))
         elif self.csf_offset:
             library = norm_continous_input
+
         else:
-            # library = self.size_factor
             library = F.linear(one_hot(batch_index, self.n_batch), self.size_factor)
 
         return {
@@ -919,6 +974,9 @@ class PROTVAE(BaseModuleClass):
 
         trend_batch_key = EXTRA_KEYS.TREND_BATCH_KEY
         trend_batch_index = tensors[trend_batch_key] if trend_batch_key in tensors.keys() else None
+
+        
+        
 
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -944,6 +1002,7 @@ class PROTVAE(BaseModuleClass):
             "cat_covs": cat_covs,
             "trend_batch_index": trend_batch_index,
             "x_nc": x_nc,
+           
         }
 
     @auto_move_data
@@ -977,6 +1036,13 @@ class PROTVAE(BaseModuleClass):
             # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
             trend_batch_index = trend_batch_index.repeat(n_samples, 1)
 
+        if self.n_trend_batch is not None:
+            shift = self.shift_embedding(trend_batch_index.long())
+            mean_embedding = self.shift_embedding.weight.clone() # it could be that the shift has to be sampled from a normal distribution
+            self.mean_embedding = mean_embedding
+        
+        
+        
         if cat_covs is not None:
             # shape: (n_batch, n_cat_covs) -> (n_samples * n_batch, n_cat_covs)
             cat_covs_repeat = cat_covs.repeat(n_samples, 1)
@@ -995,10 +1061,16 @@ class PROTVAE(BaseModuleClass):
         # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
         x_obs = x.repeat(n_samples, 1) if use_x_mix else None
 
-        # x_mean, x_var, m_prob = self.decoder(
-        #     decoder_input, x_obs, self.size_factor, batch_index, *categorical_input
-        # )
+        
 
+        latent_offset = torch.index_select(self.alpha, 0, trend_batch_index[:, 0].long()) # batch_size x batch_dim
+        
+        size_factor = latent_offset.sum(dim=-1) # batch_size x 1
+       
+
+            
+
+        
         x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, x_nc, *categorical_input) # double check this
 
         # shape: (n_samples * n_batch, n_input) -> (n_samples, n_batch, n_input)
@@ -1007,18 +1079,29 @@ class PROTVAE(BaseModuleClass):
         x_var = x_var.view(unpacked_shape)
         m_prob = m_prob.view(unpacked_shape)
 
+        mu_a = torch.index_select(self.mean_embedding, 0, trend_batch_index[:, 0].long()) 
+        a = torch.index_select(self.alpha, 0, trend_batch_index[:, 0].long())
+        pa = Normal(a, torch.ones_like(a))
+
+
         return {
             "x": x,
             "x_norm": x_norm,
             "x_mean": x_mean,
             "x_var": x_var,
             "m_prob": m_prob,
+            "pa": pa,
+            "mu_a": mu_a,
         }
 
     def _get_distributions(self, inference_outputs, generative_outputs):
         qz = inference_outputs["qz"]
         pz = inference_outputs["pz"]
         # size_factor = inference_outputs["library"]
+
+    
+        pa = generative_outputs["pa"]
+        mu_a = generative_outputs["mu_a"]
 
         x_mean = generative_outputs["x_mean"]
         x_var = generative_outputs["x_var"]
@@ -1032,15 +1115,22 @@ class PROTVAE(BaseModuleClass):
         # else:
         #      px = Normal(loc= x_mean, scale=torch.sqrt(x_var))
 
+        
+            
         px = Normal(loc=x_mean, scale=torch.sqrt(x_var))
 
         pm = Bernoulli(probs=m_prob)
+
+        
 
         return {
             "qz": qz,
             "pz": pz,
             "px": px,
             "pm": pm,
+            "pa": pa,
+            "mu_a": mu_a,
+        
         }
 
     def loss(
@@ -1080,18 +1170,27 @@ class PROTVAE(BaseModuleClass):
     def _elbo_loss(
         self,
         x,
+        z,
         mask,
         scoring_mask,
         qz,
         pz,
         px,
         pm,
+        pa,
+        mu_a,
         kl_weight: float = 1.0,
         mechanism_weight: float = 1.0,
         **kwargs,
     ) -> LossOutput:
         log_px = mask * px.log_prob(x)
         log_pm = mechanism_weight * pm.log_prob(mask)
+
+
+        log_alpha = -pa.log_prob(mu_a).sum(dim=-1) # batch_size
+       
+        
+
 
         # log_obs = scoring_mask * (log_px + log_pm)
         log_obs = 1.0 * (log_px + log_pm)
@@ -1101,14 +1200,25 @@ class PROTVAE(BaseModuleClass):
 
         # (n_batch, n_features) -> (n_batch,)
         reconstruction_loss = -log_pd.sum(dim=-1)
+       
 
         ## KL
         # (n_batch, n_latent) -> (n_batch,)
-        kl = kl_divergence(qz, pz).sum(dim=-1)
+        # kl = kl_divergence(qz, pz).sum(dim=-1)
+
+        if self.mixture_prior:
+            kl = qz.log_prob(z) - pz.log_prob(z)
+            kl = kl.sum(dim=-1)
+        else:
+             kl = kl_divergence(qz, pz).sum(dim=-1)
+            
+
+
+        
         weighted_kl = kl * kl_weight
 
         ## ELBO
-        loss = (reconstruction_loss + weighted_kl).mean()
+        loss = (reconstruction_loss + log_alpha + weighted_kl).mean() 
 
         return LossOutput(loss=loss, reconstruction_loss=reconstruction_loss, kl_local=kl)
 
