@@ -118,7 +118,7 @@ class PROTVI(
         decoder_type: Literal["selection", "conjunction", "hybrid"] = "selection",
         loss_type: Literal["elbo", "iwae"] = "elbo",
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
-        batch_dim: int = None,
+        batch_dim: int = 10,
         n_samples: int = 1,
         max_loss_dropout: float = 0.0,
         use_x_mix: bool = False,
@@ -126,7 +126,6 @@ class PROTVI(
         batch_continous_info: np.ndarray = None,
         detection_trend: Literal["global", "per-batch"] = "global",
         negative_control_indices: np.ndarray=None,
-        tau_booster: np.ndarray=None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -147,6 +146,12 @@ class PROTVI(
         n_trend_batch = (
             self.adata_manager.get_state_registry(EXTRA_KEYS.TREND_BATCH_KEY).n_cats_per_key
             if EXTRA_KEYS.TREND_BATCH_KEY in self.adata_manager.data_registry
+            else None
+        )
+
+        n_multilevel_batch = (
+            self.adata_manager.get_state_registry(EXTRA_KEYS.MULTILEVEL_COV_KEY).n_cats_per_key
+            if EXTRA_KEYS.MULTILEVEL_COV_KEY in self.adata_manager.data_registry
             else None
         )
 
@@ -176,7 +181,7 @@ class PROTVI(
             detection_trend=detection_trend,
             n_trend_batch=n_trend_batch,
             negative_control_indices=negative_control_indices,
-            # tau_booster=tau_booster,
+            n_multilevel_batch=n_multilevel_batch,
             **model_kwargs,
         )
 
@@ -523,7 +528,7 @@ class PROTVI(
         prior_categorical_covariate_keys: list[str] = None,
         norm_continuous_covariate_keys: list[str] = None,
         detection_trend_key: list[str] = None, # TO DO: change this to str to avoid all tuple related errors, also for other vars
-        booster_protein_variances_key: list[str] = None,
+        multilevel_cov_key: list[str] = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object for PROTVI.
@@ -558,18 +563,12 @@ class PROTVI(
             NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
             CategoricalJointObsField(EXTRA_KEYS.PRIOR_CAT_COVS_KEY, prior_categorical_covariate_keys),
             NumericalJointObsField(EXTRA_KEYS.PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys),
-            NumericalJointObsField(EXTRA_KEYS.NORM_CONT_COVS_KEY, norm_continuous_covariate_keys),
             CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
+            CategoricalJointObsField(EXTRA_KEYS.MULTILEVEL_COV_KEY, multilevel_cov_key),
             
         ]
 
-        if booster_protein_variances_key is not None:
-            anndata_fields.append(
-                ObsmField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key),
-            # NumericalJointVarField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key), # note: for some reasons both var stuff have issues with dataloader
-            # VarmField(EXTRA_KEYS.BOOSTER_PROTEINVAR_KEY, booster_protein_variances_key),
-            )
-
+       
         
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
