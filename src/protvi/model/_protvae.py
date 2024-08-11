@@ -173,7 +173,7 @@ class DecoderPROTVI(nn.Module):
             h_input = n_input + batch_dim
             if batch_dim is None:
                 raise ValueError("`n_embedding` must be provided when using batch embedding")
-            self.batch_embedding = nn.Linear(n_batch, batch_dim, bias=False) # TO DO: replace with nn.Embedding
+            self.batch_embedding = nn.Embedding(n_batch, batch_dim) # TO DO: replace with nn.Embedding
         elif batch_embedding_type == "encoder":
             h_input = n_input + batch_dim
             self.batch_encoder = BatchEncoder(
@@ -250,13 +250,13 @@ class DecoderPROTVI(nn.Module):
         elif batch_negative_control is not None:
             batch_input = batch_negative_control
         else:
-            batch_input = one_hot(batch_index, self.n_batch)    
+            batch_input = None
             
 
         if self.batch_embedding_type == "one-hot":
-            batch_encoding = batch_input
+            batch_encoding = one_hot(batch_index, self.n_batch)    
         elif self.batch_embedding_type == "embedding":
-            batch_encoding = self.batch_embedding(batch_input)
+            batch_encoding = self.batch_embedding(batch_index.long()).squeeze(1) # required .long() ? 
         elif self.batch_embedding_type == "encoder":
             batch_encoding = self.batch_encoder(torch.tensor(batch_input, dtype=z.dtype, device=z.device))
             batch_encoding = torch.index_select(
@@ -265,6 +265,9 @@ class DecoderPROTVI(nn.Module):
         else:
             raise ValueError("Invalid batch embedding type")
 
+        
+        
+        
         hz = torch.cat((z, batch_encoding), dim=-1)
 
         h = self.h_decoder(hz, *extra_cat_list)
@@ -272,7 +275,7 @@ class DecoderPROTVI(nn.Module):
 
         
         
-        x_mean = x_norm + size_factor.unsqueeze(1) # this may be need to be changed if bio_group not specified
+        x_mean = x_norm + size_factor 
         # x_mean = x_norm 
         
 
@@ -667,14 +670,13 @@ class PROTVAE(BaseModuleClass):
         max_loss_dropout: float = 0.0,
         use_x_mix=False,
         encode_norm_factors=False,
-        use_norm_factors=False,  # @TODO: unused
         n_prior_continuous_cov: int = 0,
         n_prior_cats_per_cov: Iterable[int] = None,
-        n_norm_continuous_cov: int = 0,  # @TODO: unused
         batch_continous_info: torch.Tensor = None,
         detection_trend: Literal["global", "per-batch"] = "global",
         n_trend_batch: int = None,
         negative_control_indices: list[int] = None,
+        n_multilevel_batch: int = None,
         
         
     ):
@@ -682,6 +684,7 @@ class PROTVAE(BaseModuleClass):
         self.n_latent = n_latent
         self.n_batch = n_batch
         self.n_trend_batch = n_trend_batch
+        self.n_multilevel_batch = n_multilevel_batch
         self.log_variational = log_variational
         self.x_variance = x_variance
         self.latent_distribution = latent_distribution
@@ -783,8 +786,10 @@ class PROTVAE(BaseModuleClass):
         
         
         # TO DO: Need to deal with this properly if using embedding for categorical covariates
-        batch_dim = 0 if batch_dim is None else batch_dim
-        n_input_prior_encoder = n_prior_continuous_cov + batch_dim
+        # batch_dim = 0 if batch_dim is None else batch_dim
+        
+        if n_prior_cats_per_cov == 0:
+            n_input_prior_encoder = n_prior_continuous_cov
         self.prior_encoder = Encoder(
             n_input=n_input_prior_encoder,
             n_output=n_latent,
@@ -805,10 +810,9 @@ class PROTVAE(BaseModuleClass):
         # self.size_factor = nn.Parameter(torch.randn(n_trend_batch))
 
 
-        self.alpha = nn.Parameter(torch.rand(n_trend_batch[0], batch_dim),requires_grad=False) # torch.rand values between 0-1, torch.full to initialize all with a single value
-        
-        
-        self.shift_embedding = nn.Embedding(self.n_trend_batch[0], batch_dim) if self.n_trend_batch is not None else None
+       
+        self.alpha = nn.Parameter(torch.rand(n_multilevel_batch[0], batch_dim),requires_grad=False) if self.n_multilevel_batch is not None else None# torch.rand values between 0-1, torch.full to initialize all with a single value
+        self.shift_embedding = nn.Embedding(self.n_multilevel_batch[0], batch_dim) if self.n_multilevel_batch is not None else None
         
 
         self.prior_cat_embedding = nn.Embedding(self.n_prior_cats_per_cov, batch_dim) if self.n_prior_cats_per_cov is not None else None
@@ -840,9 +844,7 @@ class PROTVAE(BaseModuleClass):
         prior_cat_key = EXTRA_KEYS.PRIOR_CAT_COVS_KEY
         prior_cat_covs = tensors[prior_cat_key] if prior_cat_key in tensors.keys() else None
 
-        norm_cont_key = EXTRA_KEYS.NORM_CONT_COVS_KEY
-        norm_cont_covs = tensors[norm_cont_key] if norm_cont_key in tensors.keys() else None
-
+       
         
 
         return {
@@ -852,7 +854,7 @@ class PROTVAE(BaseModuleClass):
             "cat_covs": cat_covs,
             "prior_cont_covs": prior_cont_covs,
             "prior_cat_covs": prior_cat_covs,
-            "norm_cont_covs": norm_cont_covs,
+           
             
         }
 
@@ -865,20 +867,13 @@ class PROTVAE(BaseModuleClass):
         cat_covs=None,
         prior_cont_covs=None,
         prior_cat_covs=None,
-        norm_cont_covs=None,
         n_samples=None,
     ):
         """High level inference method.
 
         Runs the inference (encoder) model.
         """
-        ## csf adjustment
-        if norm_cont_covs is not None:
-            norm_continous_input = norm_cont_covs.to(x.device)
-            self.csf_offset = True
-        else:
-            norm_continous_input = torch.empty(0).to(x.device)
-            self.csf_offset = False
+        
 
         ## latent prior
         if prior_cont_covs is not None:
@@ -888,9 +883,6 @@ class PROTVAE(BaseModuleClass):
 
 
         if prior_cat_covs is not None:
-            #prior_categorical_input = one_hot(prior_cat_covs, self.n_prior_cats_per_cov) # TO DO: replace with nn.Embedding
-            # print(prior_cat_covs.size())
-            # print(prior_cat_covs)
             prior_categorical_input = self.prior_cat_embedding(prior_cat_covs.long())
         else:
             prior_categorical_input = torch.empty(0).to(x.device)   
@@ -906,7 +898,7 @@ class PROTVAE(BaseModuleClass):
         
         if (prior_cont_covs is not None) or (prior_cat_covs is not None):
             latent_model_input = torch.cat((prior_continous_input, prior_categorical_input), dim=-1)
-            # print(latent_model_input.size())
+            
             latent_model_input = latent_model_input.squeeze(1)
             # pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
             pz, _ = self.prior_encoder(latent_model_input)
@@ -952,8 +944,6 @@ class PROTVAE(BaseModuleClass):
         if self.encode_norm_factors:
             ql, mean_library = self.l_encoder(encoder_input, batch_index, *categorical_input)
             library = ql.sample((n_samples,))
-        elif self.csf_offset:
-            library = norm_continous_input
 
         else:
             library = F.linear(one_hot(batch_index, self.n_batch), self.size_factor)
@@ -974,6 +964,9 @@ class PROTVAE(BaseModuleClass):
 
         trend_batch_key = EXTRA_KEYS.TREND_BATCH_KEY
         trend_batch_index = tensors[trend_batch_key] if trend_batch_key in tensors.keys() else None
+
+        multilevel_batch_key = EXTRA_KEYS.MULTILEVEL_COV_KEY
+        multilevel_batch_index = tensors[multilevel_batch_key] if multilevel_batch_key in tensors.keys() else None
 
         
         
@@ -1001,6 +994,7 @@ class PROTVAE(BaseModuleClass):
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
             "trend_batch_index": trend_batch_index,
+            "multilevel_batch_index": multilevel_batch_index,
             "x_nc": x_nc,
            
         }
@@ -1015,6 +1009,7 @@ class PROTVAE(BaseModuleClass):
         cont_covs=None,
         cat_covs=None,
         trend_batch_index=None,
+        multilevel_batch_index=None,
         x_nc=None,
         use_x_mix=False,
     ):
@@ -1036,10 +1031,23 @@ class PROTVAE(BaseModuleClass):
             # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
             trend_batch_index = trend_batch_index.repeat(n_samples, 1)
 
-        if self.n_trend_batch is not None:
-            shift = self.shift_embedding(trend_batch_index.long())
+        
+        mu_a = a = pa = None
+        if multilevel_batch_index is not None:
+            # shape: (n_batch, 1) -> (n_samples * n_batch, 1)
+            multilevel_batch_index = multilevel_batch_index.repeat(n_samples, 1)
+            shift = self.shift_embedding(multilevel_batch_index.long())
             mean_embedding = self.shift_embedding.weight.clone() # it could be that the shift has to be sampled from a normal distribution
             self.mean_embedding = mean_embedding
+            
+            latent_offset = torch.index_select(self.alpha, 0, multilevel_batch_index[:, 0].long()) # batch_size x batch_dim
+            size_factor = latent_offset.sum(dim=-1) # batch_size x 1
+            size_factor = size_factor.unsqueeze(1)
+
+            mu_a = torch.index_select(self.mean_embedding, 0, multilevel_batch_index[:, 0].long()) 
+            a = torch.index_select(self.alpha, 0, multilevel_batch_index[:, 0].long())
+            pa = Normal(a, torch.ones_like(a))
+
         
         
         
@@ -1060,16 +1068,6 @@ class PROTVAE(BaseModuleClass):
 
         # shape: (n_batch, n_input) -> (n_samples * n_batch, n_input)
         x_obs = x.repeat(n_samples, 1) if use_x_mix else None
-
-        
-
-        latent_offset = torch.index_select(self.alpha, 0, trend_batch_index[:, 0].long()) # batch_size x batch_dim
-        
-        size_factor = latent_offset.sum(dim=-1) # batch_size x 1
-       
-
-            
-
         
         x_norm, x_mean, x_var, m_prob = self.decoder(decoder_input, x_obs, size_factor, batch_index, trend_batch_index, x_nc, *categorical_input) # double check this
 
@@ -1079,10 +1077,7 @@ class PROTVAE(BaseModuleClass):
         x_var = x_var.view(unpacked_shape)
         m_prob = m_prob.view(unpacked_shape)
 
-        mu_a = torch.index_select(self.mean_embedding, 0, trend_batch_index[:, 0].long()) 
-        a = torch.index_select(self.alpha, 0, trend_batch_index[:, 0].long())
-        pa = Normal(a, torch.ones_like(a))
-
+        
 
         return {
             "x": x,
@@ -1187,7 +1182,9 @@ class PROTVAE(BaseModuleClass):
         log_pm = mechanism_weight * pm.log_prob(mask)
 
 
-        log_alpha = -pa.log_prob(mu_a).sum(dim=-1) # batch_size
+        log_alpha = torch.tensor(0.0)
+        if mu_a is not None:
+            log_alpha = -pa.log_prob(mu_a).sum(dim=-1) # batch_size
        
         
 
