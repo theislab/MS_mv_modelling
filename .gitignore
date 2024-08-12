@@ -2,6 +2,8 @@
 data/
 results/
 
+*.pkl
+
 *.svg
 *.png
 

@@ -158,6 +158,8 @@ def run_protDP(adata, layer=None):
     anndata2ri.activate()
     r.assign("r_adata", r_adata)
 
+    layer = "X" if layer is None else layer
+
     r(
         f"""
         library(protDP)
@@ -169,7 +171,7 @@ def run_protDP(adata, layer=None):
     dpcFit = r("dpcfit")
 
     def listvector_to_dict(r_listvector):
-        py_dict = dict(zip(r_listvector.names, map(convert_r_to_python, r_listvector)))
+        py_dict = dict(zip(r_listvector.names, map(convert_r_to_python, r_listvector), strict=True))
         return py_dict
 
     def convert_r_to_python(r_object):
