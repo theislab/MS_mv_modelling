@@ -301,6 +301,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         n_hidden: int = 128,
         x_variance: Literal["protein", "protein-cell", "protein-batch"] = "protein",
         n_batch: int = None,
+        n_negative_control: int = None,
         batch_embedding_type: Literal["one-hot", "embedding", "encoder"] = "one-hot",
         batch_dim: int = None,
         batch_continous_info: torch.Tensor = None,
@@ -340,7 +341,7 @@ class ConjunctionDecoderPROTVI(nn.Module):
         x_obs: torch.Tensor,
         size_factor: torch.Tensor,
         batch_index: torch.Tensor,
-        trend_batch_index: torch.Tensor,
+        trend_batch_index: torch.Tensor=None,
         batch_negative_control: torch.Tensor=None,
         *extra_cat_list: int,
     ):
@@ -367,7 +368,9 @@ class ConjunctionDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
+        trend_batch_index = None # override to ensure trend is not used
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, trend_batch_index, batch_negative_control, *extra_cat_list)
+
         m_prob = self.m_prob_decoder(h)
                     
         return x_norm, x_mean, x_var, m_prob
@@ -451,7 +454,7 @@ class HybridDecoderPROTVI(nn.Module):
             mean, variance, and detection probability tensors
 
         """
-        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, batch_negative_control, *extra_cat_list)
+        x_norm, x_mean, x_var, h = self.base_nn(z, size_factor, batch_index, trend_batch_index, batch_negative_control, *extra_cat_list)
 
         # x_mix
         if x_obs is None:
