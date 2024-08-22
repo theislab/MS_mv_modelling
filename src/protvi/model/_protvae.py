@@ -777,10 +777,14 @@ class PROTVAE(BaseModuleClass):
         )
 
         ## Latent prior encoder
+        
         n_prior_cats_per_cov = n_prior_cats_per_cov[0] if n_prior_cats_per_cov is not None else 0
-        n_input_prior_encoder = n_prior_continuous_cov + n_prior_cats_per_cov
-        self.n_input_prior_encoder = n_input_prior_encoder
+        
         self.n_prior_cats_per_cov = n_prior_cats_per_cov
+        self.prior_cat_embedding = nn.Embedding(self.n_prior_cats_per_cov, batch_dim) if n_prior_cats_per_cov > 0 else None
+       
+
+        # n_input_prior_encoder = n_prior_continuous_cov + n_prior_cats_per_cov
         # cat_list = list([] if n_prior_cats_per_cov is None else n_prior_cats_per_cov)
         
         # assuming the nn.Embedding as default implementation for all categorical data
@@ -793,6 +797,12 @@ class PROTVAE(BaseModuleClass):
         
         if n_prior_cats_per_cov == 0:
             n_input_prior_encoder = n_prior_continuous_cov
+        else:
+            n_input_prior_encoder = n_prior_continuous_cov + batch_dim
+
+        self.n_input_prior_encoder = n_input_prior_encoder
+
+            
         self.prior_encoder = Encoder(
             n_input=n_input_prior_encoder,
             n_output=n_latent,
@@ -818,15 +828,15 @@ class PROTVAE(BaseModuleClass):
         self.shift_embedding = nn.Embedding(self.n_multilevel_batch[0], batch_dim) if self.n_multilevel_batch is not None else None
         
 
-        self.prior_cat_embedding = nn.Embedding(self.n_prior_cats_per_cov, batch_dim) if self.n_prior_cats_per_cov is not None else None
+        
 
         
-        self.mixture_prior = False
-        if n_prior_cats_per_cov > 1:
-            self.b_prior_logits = torch.nn.Parameter(torch.zeros(n_prior_cats_per_cov))
-            self.b_prior_means = torch.nn.Parameter(torch.randn(10, n_prior_cats_per_cov))
-            self.b_prior_scales = torch.nn.Parameter(torch.zeros(10, n_prior_cats_per_cov))
-            self.mixture_prior = True
+        # self.mixture_prior = False
+        # if n_prior_cats_per_cov > 1:
+        #     self.b_prior_logits = torch.nn.Parameter(torch.zeros(n_prior_cats_per_cov))
+        #     self.b_prior_means = torch.nn.Parameter(torch.randn(10, n_prior_cats_per_cov))
+        #     self.b_prior_scales = torch.nn.Parameter(torch.zeros(10, n_prior_cats_per_cov))
+        #     self.mixture_prior = True
             
 
 
@@ -886,7 +896,7 @@ class PROTVAE(BaseModuleClass):
 
 
         if prior_cat_covs is not None:
-            prior_categorical_input = self.prior_cat_embedding(prior_cat_covs.long())
+            prior_categorical_input = self.prior_cat_embedding(prior_cat_covs.long()) # TODO extend to multiple categorical covariate
         else:
             prior_categorical_input = torch.empty(0).to(x.device)   
         
@@ -906,15 +916,15 @@ class PROTVAE(BaseModuleClass):
             # pz, _ = self.prior_encoder(prior_continous_input, *prior_categorical_input)
             pz, _ = self.prior_encoder(latent_model_input)
             
-        elif (prior_cat_covs is not None) and (prior_cont_covs is None):
-            offset = (
-                10.0 * F.one_hot(prior_cat_covs, num_classes=self.n_prior_cats_per_cov).float()
-                if self.n_prior_cats_per_cov >= 2
-                else 0.0
-            )
-            cats =torch.distributions.Categorical(logits=self.b_prior_logits + offset)
-            normal_dists = torch.distributions.Normal(self.b_prior_means, torch.exp(self.b_prior_scales))
-            pz = torch.distributions.MixtureSameFamily(cats, normal_dists)
+        # elif (prior_cat_covs is not None) and (prior_cont_covs is None):
+        #     offset = (
+        #         10.0 * F.one_hot(prior_cat_covs, num_classes=self.n_prior_cats_per_cov).float()
+        #         if self.n_prior_cats_per_cov >= 2
+        #         else 0.0
+        #     )
+        #     cats =torch.distributions.Categorical(logits=self.b_prior_logits + offset)
+        #     normal_dists = torch.distributions.Normal(self.b_prior_means, torch.exp(self.b_prior_scales))
+        #     pz = torch.distributions.MixtureSameFamily(cats, normal_dists)
             
             
         else:
@@ -1202,15 +1212,15 @@ class PROTVAE(BaseModuleClass):
         reconstruction_loss = -log_pd.sum(dim=-1)
        
 
-        ## KL
+        # KL
         # (n_batch, n_latent) -> (n_batch,)
-        # kl = kl_divergence(qz, pz).sum(dim=-1)
+        kl = kl_divergence(qz, pz).sum(dim=-1)
 
-        if self.mixture_prior:
-            kl = qz.log_prob(z) - pz.log_prob(z)
-            kl = kl.sum(dim=-1)
-        else:
-             kl = kl_divergence(qz, pz).sum(dim=-1)
+        # if self.mixture_prior:
+        #     kl = qz.log_prob(z) - pz.log_prob(z)
+        #     kl = kl.sum(dim=-1)
+        # else:
+        #      kl = kl_divergence(qz, pz).sum(dim=-1)
             
 
 
