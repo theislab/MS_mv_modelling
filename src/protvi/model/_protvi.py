@@ -125,7 +125,7 @@ class PROTVI(
         encode_norm_factors: bool = False,
         batch_continous_info: np.ndarray = None,
         detection_trend: Literal["global", "per-batch"] = "global",
-        negative_control_indices: np.ndarray=None,
+        negative_control_indices: np.ndarray = None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -300,7 +300,7 @@ class PROTVI(
         n_samples: int = 1,
         n_samples_overall: int = None,
         weights: Literal["uniform", "importance"] = None,
-        batch_size: int  = None,
+        batch_size: int = None,
         return_mean: bool = True,
         return_numpy: bool = None,
         # **importance_weighting_kwargs,
@@ -436,26 +436,26 @@ class PROTVI(
             return norm_abuns
 
     def get_detection_curve(self):
-        if self.module.decoder_type == 'selection':
+        if self.module.decoder_type == "selection":
             slope, intercept = self.module.decoder.get_mask_logit_weights()
             return slope, intercept
         else:
             raise NotImplementedError(f"Slope and Intercept unknown for decoder type: {self.module.decoder_type}")
-    
+
     def differential_abundance(
         self,
         adata: AnnData = None,
         groupby: str = None,
         group1: list[str] = None,
-        group2: str  = None,
+        group2: str = None,
         idx1: list[int] = None,
         idx2: list[int] = None,
         mode: Literal["vanilla", "change"] = "change",
         delta: float = 0.25,
-        batch_size: int  = None,
+        batch_size: int = None,
         all_stats: bool = True,
         batch_correction: bool = False,
-        batchid1: list[str]  = None,
+        batchid1: list[str] = None,
         batchid2: list[str] = None,
         fdr_target: float = 0.05,
         silent: bool = False,
@@ -527,7 +527,9 @@ class PROTVI(
         prior_continuous_covariate_keys: list[str] = None,
         prior_categorical_covariate_keys: list[str] = None,
         norm_continuous_covariate_keys: list[str] = None,
-        detection_trend_key: list[str] = None, # TO DO: change this to str to avoid all tuple related errors, also for other vars
+        detection_trend_key: list[
+            str
+        ] = None,  # TO DO: change this to str to avoid all tuple related errors, also for other vars
         multilevel_cov_key: list[str] = None,
         **kwargs,
     ):
@@ -565,11 +567,8 @@ class PROTVI(
             NumericalJointObsField(EXTRA_KEYS.PRIOR_CONT_COVS_KEY, prior_continuous_covariate_keys),
             CategoricalJointObsField(EXTRA_KEYS.TREND_BATCH_KEY, detection_trend_key),
             CategoricalJointObsField(EXTRA_KEYS.MULTILEVEL_COV_KEY, multilevel_cov_key),
-            
         ]
 
-       
-        
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)

@@ -1,6 +1,10 @@
 protVI
 ======
-A deep generative model for single-cell MS proteomics data.
+A deep generative model for single-cell mass spectrometry (MS)-based proteomics data, supporting:
+
+- Missing value imputation
+- Batch correction
+- Differential abundance analysis
 
 Quick start
 -----------
@@ -12,7 +16,6 @@ Quick start
 
     model = PROTVI(adata)
     model.train()
-
 
 
 .. toctree::
