@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 
 # files
@@ -134,3 +135,11 @@ def fill_if_nan(a, b):
     c = a.copy()
     c[mask] = b[mask]
     return c
+
+
+def smoothing(x, y, lowess_frac = 0.6):
+    # lowess_frac = 0.6  # size of data (%) for estimation =~ smoothing window
+    lowess_it = 0
+    x_smooth = x
+    y_smooth = lowess(y, x, is_sorted=False, frac=lowess_frac, it=lowess_it, return_sorted=False)
+    return x_smooth, y_smooth
