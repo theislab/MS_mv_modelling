@@ -6,6 +6,9 @@ A deep generative model for single-cell mass spectrometry (MS)-based proteomics 
 - Batch correction
 - Differential abundance analysis
 
+.. note::
+    The model is still in active development.
+
 Quick start
 -----------
 .. code-block:: python
@@ -20,12 +23,12 @@ Quick start
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
    :hidden:
 
    installation
-   examples/index
+   tutorials/index
    api
+   references
 
 
 

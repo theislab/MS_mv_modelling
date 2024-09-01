@@ -42,7 +42,7 @@ def get_missingness_per_protein(adata, layer=None):
 def sort_anndata_by_missingness(adata, layer=None):
     missingness = pd.DataFrame(get_missingness_per_protein(adata, layer=layer), columns=["missingness"])
     missingness.sort_values(by="missingness", ascending=True, inplace=True)
-    return adata[:, missingness.index]
+    return adata[:, missingness.index].copy()
 
 
 def reshape_anndata_like(adata, adata_like, sanity_check=True, verbose=True):

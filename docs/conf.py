@@ -19,16 +19,26 @@ extensions = []
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
+
+bibtex_bibfiles = ["references.bib"]
+
 extensions = [
-    "myst_parser",
+    "myst_nb",
     "sphinx.ext.duration",
     "sphinx.ext.doctest",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
+    "sphinxcontrib.bibtex",
     "nbsphinx",
+    "sphinx_copybutton",
+    "IPython.sphinxext.ipython_console_highlighting",
+    "sphinx_autodoc_typehints",
+    "sphinx.ext.mathjax",
 ]
+
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "sphinx": ("https://www.sphinx-doc.org/en/master/", None),

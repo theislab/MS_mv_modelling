@@ -172,10 +172,12 @@ class DecoderPROTVI(nn.Module):
             h_input = n_input + n_batch
         elif batch_embedding_type == "embedding":
             h_input = n_input + batch_dim
-            if batch_dim is None:
-                raise ValueError("`n_embedding` must be provided when using batch embedding")
-            self.batch_embedding = nn.Embedding(n_batch, batch_dim)  # TO DO: replace with nn.Embedding
+            self.batch_embedding = nn.Embedding(n_batch, batch_dim)
         elif batch_embedding_type == "encoder":
+            if batch_input_dim is None:
+                raise ValueError(
+                    "To use `encoder`, either `batch_continous_info` or `n_negative_control` must be provided."
+                )
             h_input = n_input + batch_dim
             self.batch_encoder = BatchEncoder(
                 n_input=batch_input_dim,
@@ -256,7 +258,7 @@ class DecoderPROTVI(nn.Module):
         elif self.batch_embedding_type == "embedding":
             batch_encoding = self.batch_embedding(batch_index.long()).squeeze(1)  # required .long() ?
         elif self.batch_embedding_type == "encoder":
-            batch_encoding = self.batch_encoder(torch.tensor(batch_input, dtype=z.dtype, device=z.device))
+            batch_encoding = self.batch_encoder(batch_input.to(z.device))
             batch_encoding = torch.index_select(batch_encoding, 0, batch_index[:, 0].long())  # batch x latent dim
         else:
             raise ValueError("Invalid batch embedding type")
